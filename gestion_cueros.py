@@ -22,9 +22,18 @@ def init_db():
             cantidad INTEGER,
             peso_kg REAL,
             precio_total REAL,
+            neto REAL,
+            iva_rate REAL,
             estado_pago TEXT -- 'Pagado' o 'Impago'
         )
     ''')
+    # Migracion simple para columnas nuevas
+    c.execute("PRAGMA table_info(movimientos)")
+    columnas = {row[1] for row in c.fetchall()}
+    if 'neto' not in columnas:
+        c.execute('ALTER TABLE movimientos ADD COLUMN neto REAL')
+    if 'iva_rate' not in columnas:
+        c.execute('ALTER TABLE movimientos ADD COLUMN iva_rate REAL')
     # Tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -44,12 +53,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-def agregar_movimiento(tipo, descripcion, cantidad, peso, precio, estado):
+def agregar_movimiento(tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, estado):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('INSERT INTO movimientos (fecha, tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago) VALUES (?,?,?,?,?,?,?)',
-              (fecha, tipo, descripcion, cantidad, peso, precio, estado))
+    c.execute('''
+        INSERT INTO movimientos
+        (fecha, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    ''', (fecha, tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, estado))
     conn.commit()
     conn.close()
 
@@ -101,14 +113,14 @@ def actualizar_password(user_id, new_password):
     conn.commit()
     conn.close()
 
-def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago):
+def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     c.execute('''
         UPDATE movimientos
-        SET tipo = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, estado_pago = ?
+        SET tipo = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, estado_pago = ?
         WHERE id = ?
-    ''', (tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago, mov_id))
+    ''', (tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago, mov_id))
     conn.commit()
     conn.close()
 
@@ -149,12 +161,33 @@ desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
 col1, col2 = st.sidebar.columns(2)
 cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
 peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
-precio_input = st.sidebar.number_input("Monto Total ($)", min_value=0.0, step=100.0)
+precio_kg = st.sidebar.number_input("Precio por kg ($)", min_value=0.0, step=10.0)
+iva_opcion = st.sidebar.selectbox("IVA", ["0%", "10.5%", "21%"])
 estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
+
+iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
+iva_rate = iva_map[iva_opcion]
+neto = precio_kg * peso_input
+total_con_iva = neto * (1 + iva_rate)
+promedio_unidad = (neto / cant_input) if cant_input > 0 else 0.0
+
+st.sidebar.markdown("**Detalle de calculo**")
+st.sidebar.write(f"Neto: ${neto:,.2f}")
+st.sidebar.write(f"Total con IVA: ${total_con_iva:,.2f}")
+st.sidebar.write(f"Promedio por unidad: ${promedio_unidad:,.2f}")
 
 if st.sidebar.button("Guardar Movimiento"):
     if desc_input:
-        agregar_movimiento(tipo_operacion, desc_input, cant_input, peso_input, precio_input, estado_pago)
+        agregar_movimiento(
+            tipo_operacion,
+            desc_input,
+            cant_input,
+            peso_input,
+            total_con_iva,
+            neto,
+            iva_rate,
+            estado_pago
+        )
         st.sidebar.success("¡Registrado con éxito!")
         st.rerun() # Recargar la página para ver cambios
     else:
@@ -207,7 +240,17 @@ if not df.empty:
     if filtro_cliente != "Todos":
         df_show = df_show[df_show['descripcion'] == filtro_cliente]
 
-    st.dataframe(df_show, use_container_width=True)
+    df_show_display = df_show.copy()
+    if 'iva_rate' in df_show_display.columns:
+        df_show_display['iva_%'] = (df_show_display['iva_rate'].fillna(0) * 100).round(1)
+    columnas_base = [
+        'id', 'fecha', 'tipo', 'descripcion', 'cantidad', 'peso_kg',
+        'neto', 'iva_%', 'precio_total', 'estado_pago'
+    ]
+    columnas_disponibles = [c for c in columnas_base if c in df_show_display.columns]
+    df_show_display = df_show_display[columnas_disponibles]
+
+    st.dataframe(df_show_display, use_container_width=True)
 
     # --- ADMINISTRACION ---
     if st.session_state.auth['rol'] == 'admin':
@@ -250,8 +293,17 @@ if not df.empty:
             col_m1, col_m2 = st.columns(2)
             cant_edit = col_m1.number_input("Cantidad (Unidades)", min_value=1, step=1, key="mov_cant")
             peso_edit = col_m2.number_input("Peso Total (kg)", min_value=0.0, step=0.1, key="mov_peso")
-            monto_edit = st.number_input("Monto Total ($)", min_value=0.0, step=100.0, key="mov_monto")
+            precio_kg_edit = st.number_input("Precio por kg ($)", min_value=0.0, step=10.0, key="mov_precio_kg")
+            iva_edit = st.selectbox("IVA", ["0%", "10.5%", "21%"], key="mov_iva")
             estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
+
+            iva_rate_edit = iva_map[iva_edit]
+            neto_edit = precio_kg_edit * peso_edit
+            total_con_iva_edit = neto_edit * (1 + iva_rate_edit)
+            promedio_unidad_edit = (neto_edit / cant_edit) if cant_edit > 0 else 0.0
+            st.write(f"Neto: ${neto_edit:,.2f}")
+            st.write(f"Total con IVA: ${total_con_iva_edit:,.2f}")
+            st.write(f"Promedio por unidad: ${promedio_unidad_edit:,.2f}")
             if st.button("Actualizar movimiento"):
                 if desc_edit:
                     actualizar_movimiento(
@@ -260,7 +312,9 @@ if not df.empty:
                         desc_edit,
                         cant_edit,
                         peso_edit,
-                        monto_edit,
+                        total_con_iva_edit,
+                        neto_edit,
+                        iva_rate_edit,
                         estado_edit
                     )
                     st.success("Movimiento actualizado")
