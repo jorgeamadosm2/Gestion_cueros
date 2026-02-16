@@ -56,9 +56,15 @@ def init_db():
             usuario TEXT UNIQUE,
             password_hash TEXT,
             rol TEXT, -- 'admin' o 'user'
-            activo INTEGER -- 1 activo, 0 inactivo
+            activo INTEGER, -- 1 activo, 0 inactivo
+            fecha_creacion TEXT
         )
     ''')
+    # Migrar fecha_creacion
+    c.execute("PRAGMA table_info(usuarios)")
+    columnas_usuarios = {row[1] for row in c.fetchall()}
+    if 'fecha_creacion' not in columnas_usuarios:
+        c.execute('ALTER TABLE usuarios ADD COLUMN fecha_creacion TEXT')
     # Crear admin por defecto si no existe
     c.execute('SELECT COUNT(*) FROM usuarios')
     if c.fetchone()[0] == 0:
@@ -102,14 +108,15 @@ def crear_usuario(usuario, password, rol):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-    c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
-              (usuario, password_hash, rol, 1))
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo, fecha_creacion) VALUES (?,?,?,?,?)',
+              (usuario, password_hash, rol, 1, fecha))
     conn.commit()
     conn.close()
 
 def obtener_usuarios():
     conn = sqlite3.connect(DB_PATH)
-    df_users = pd.read_sql_query("SELECT id, usuario, rol, activo FROM usuarios ORDER BY id ASC", conn)
+    df_users = pd.read_sql_query("SELECT id, usuario, rol, activo, fecha_creacion FROM usuarios ORDER BY id ASC", conn)
     conn.close()
     return df_users
 
@@ -401,6 +408,10 @@ else:
 if st.session_state.auth['rol'] == 'admin':
     st.markdown("---")
     st.subheader("Administracion de Usuarios")
+
+    with st.expander("Log de Usuarios Creados"):
+        df_users_log = obtener_usuarios()
+        st.dataframe(df_users_log, use_container_width=True)
 
     with st.expander("Crear usuario"):
         nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
