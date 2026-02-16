@@ -124,6 +124,26 @@ def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_t
     conn.commit()
     conn.close()
 
+def eliminar_movimiento(mov_id):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    c.execute('DELETE FROM movimientos WHERE id = ?', (mov_id,))
+    conn.commit()
+    conn.close()
+
+@st.dialog("Confirmar eliminacion")
+def confirmar_eliminacion(mov_id, descripcion, total):
+    st.write(f"ID: {mov_id}")
+    st.write(f"Descripcion: {descripcion}")
+    st.write(f"Total: ${total:,.2f}")
+    col_c1, col_c2 = st.columns(2)
+    if col_c1.button("Eliminar"):
+        eliminar_movimiento(mov_id)
+        st.success("Movimiento eliminado")
+        st.rerun()
+    if col_c2.button("Cancelar"):
+        st.rerun()
+
 # Inicializar DB al arrancar
 init_db()
 
@@ -251,6 +271,20 @@ if not df.empty:
     df_show_display = df_show_display[columnas_disponibles]
 
     st.dataframe(df_show_display, use_container_width=True)
+
+    if st.session_state.auth['rol'] == 'admin':
+        st.markdown("---")
+        st.subheader("Eliminar movimientos")
+        for _, row in df_show_display.iterrows():
+            col_id, col_desc, col_total, col_del = st.columns([1, 5, 2, 1])
+            mov_id = int(row['id'])
+            descripcion = str(row['descripcion'])
+            total = float(row.get('precio_total', 0) or 0)
+            col_id.write(mov_id)
+            col_desc.write(descripcion)
+            col_total.write(f"${total:,.2f}")
+            if col_del.button("X", key=f"del_{mov_id}"):
+                confirmar_eliminacion(mov_id, descripcion, total)
 
     # --- ADMINISTRACION ---
     if st.session_state.auth['rol'] == 'admin':
