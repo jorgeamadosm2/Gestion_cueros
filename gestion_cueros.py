@@ -135,6 +135,13 @@ def actualizar_rol_usuario(user_id, rol):
     conn.commit()
     conn.close()
 
+def eliminar_usuario(user_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM usuarios WHERE id = ? AND usuario != ?', (user_id, 'admin'))
+    conn.commit()
+    conn.close()
+
 def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
@@ -162,6 +169,18 @@ def confirmar_eliminacion(mov_id, descripcion, total):
     if col_c1.button("Eliminar"):
         eliminar_movimiento(mov_id)
         st.session_state.last_deleted = mov_id
+        st.rerun()
+    if col_c2.button("Cancelar"):
+        st.rerun()
+
+@st.dialog("Confirmar eliminacion de usuario")
+def confirmar_eliminacion_usuario(user_id, usuario):
+    st.write(f"ID: {user_id}")
+    st.write(f"Usuario: {usuario}")
+    col_c1, col_c2 = st.columns(2)
+    if col_c1.button("Eliminar"):
+        eliminar_usuario(user_id)
+        st.session_state.last_user_deleted = user_id
         st.rerun()
     if col_c2.button("Cancelar"):
         st.rerun()
@@ -255,6 +274,9 @@ if not df.empty:
     if 'last_deleted' in st.session_state and st.session_state.last_deleted is not None:
         st.success(f"Movimiento eliminado (ID {st.session_state.last_deleted})")
         st.session_state.last_deleted = None
+    if 'last_user_deleted' in st.session_state and st.session_state.last_user_deleted is not None:
+        st.success(f"Usuario eliminado (ID {st.session_state.last_user_deleted})")
+        st.session_state.last_user_deleted = None
     # Filtros
     st.subheader("Filtros")
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 3, 1])
@@ -377,6 +399,15 @@ if not df.empty:
                     actualizar_password(user_id, nueva_pass_admin)
                 st.success("Usuario actualizado")
                 st.rerun()
+
+            st.markdown("---")
+            if st.button("Eliminar usuario"):
+                if user_id == 1:
+                    st.warning("No se puede eliminar el admin principal")
+                else:
+                    usuario_row = df_users[df_users['id'] == user_id]
+                    usuario_nombre = usuario_row['usuario'].iloc[0] if not usuario_row.empty else ""
+                    confirmar_eliminacion_usuario(user_id, usuario_nombre)
 
         st.subheader("Administracion de Movimientos")
         with st.expander("Editar movimiento"):
