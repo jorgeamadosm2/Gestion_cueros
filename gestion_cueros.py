@@ -24,6 +24,8 @@ def init_db():
             precio_total REAL,
             neto REAL,
             iva_rate REAL,
+            modo_pago TEXT,
+            detalle_pago TEXT,
             estado_pago TEXT -- 'Pagado' o 'Impago'
         )
     ''')
@@ -34,6 +36,10 @@ def init_db():
         c.execute('ALTER TABLE movimientos ADD COLUMN neto REAL')
     if 'iva_rate' not in columnas:
         c.execute('ALTER TABLE movimientos ADD COLUMN iva_rate REAL')
+    if 'modo_pago' not in columnas:
+        c.execute('ALTER TABLE movimientos ADD COLUMN modo_pago TEXT')
+    if 'detalle_pago' not in columnas:
+        c.execute('ALTER TABLE movimientos ADD COLUMN detalle_pago TEXT')
     # Tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -53,15 +59,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-def agregar_movimiento(tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, estado):
+def agregar_movimiento(tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
         INSERT INTO movimientos
-        (fecha, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago)
-        VALUES (?,?,?,?,?,?,?,?,?)
-    ''', (fecha, tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, estado))
+        (fecha, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+    ''', (fecha, tipo, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado))
     conn.commit()
     conn.close()
 
@@ -113,14 +119,14 @@ def actualizar_password(user_id, new_password):
     conn.commit()
     conn.close()
 
-def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago):
+def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     c.execute('''
         UPDATE movimientos
-        SET tipo = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, estado_pago = ?
+        SET tipo = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, modo_pago = ?, detalle_pago = ?, estado_pago = ?
         WHERE id = ?
-    ''', (tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, estado_pago, mov_id))
+    ''', (tipo, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago, mov_id))
     conn.commit()
     conn.close()
 
@@ -183,6 +189,8 @@ cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
 peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
 precio_kg = st.sidebar.number_input("Precio por kg ($)", min_value=0.0, step=10.0)
 iva_opcion = st.sidebar.selectbox("IVA", ["0%", "10.5%", "21%"])
+modo_pago = st.sidebar.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"])
+detalle_pago = st.sidebar.text_input("Detalle del pago (opcional)")
 estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
 
 iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
@@ -206,6 +214,8 @@ if st.sidebar.button("Guardar Movimiento"):
             total_con_iva,
             neto,
             iva_rate,
+            modo_pago,
+            detalle_pago,
             estado_pago
         )
         st.sidebar.success("¡Registrado con éxito!")
@@ -265,7 +275,7 @@ if not df.empty:
         df_show_display['iva_%'] = (df_show_display['iva_rate'].fillna(0) * 100).round(1)
     columnas_base = [
         'id', 'fecha', 'tipo', 'descripcion', 'cantidad', 'peso_kg',
-        'neto', 'iva_%', 'precio_total', 'estado_pago'
+        'neto', 'iva_%', 'precio_total', 'modo_pago', 'detalle_pago', 'estado_pago'
     ]
     columnas_disponibles = [c for c in columnas_base if c in df_show_display.columns]
     df_show_display = df_show_display[columnas_disponibles]
@@ -329,6 +339,8 @@ if not df.empty:
             peso_edit = col_m2.number_input("Peso Total (kg)", min_value=0.0, step=0.1, key="mov_peso")
             precio_kg_edit = st.number_input("Precio por kg ($)", min_value=0.0, step=10.0, key="mov_precio_kg")
             iva_edit = st.selectbox("IVA", ["0%", "10.5%", "21%"], key="mov_iva")
+            modo_pago_edit = st.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"], key="mov_modo")
+            detalle_pago_edit = st.text_input("Detalle del pago (opcional)", key="mov_detalle")
             estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
 
             iva_rate_edit = iva_map[iva_edit]
@@ -349,6 +361,8 @@ if not df.empty:
                         total_con_iva_edit,
                         neto_edit,
                         iva_rate_edit,
+                        modo_pago_edit,
+                        detalle_pago_edit,
                         estado_edit
                     )
                     st.success("Movimiento actualizado")
