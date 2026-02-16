@@ -195,12 +195,17 @@ if not df.empty:
     # 4. Tabla interactiva
     st.subheader("📋 Registro de Movimientos")
     
-    # Filtro rápido
+    # Filtro rapido
     filtro_pago = st.selectbox("Filtrar por estado de pago:", ["Todos", "Impago", "Pagado"])
+    clientes = sorted(df['descripcion'].dropna().unique().tolist())
+    opciones_clientes = ["Todos"] + clientes
+    filtro_cliente = st.selectbox("Filtrar por cliente / descripcion", opciones_clientes, key="filtro_cliente")
+
+    df_show = df
     if filtro_pago != "Todos":
-        df_show = df[df['estado_pago'] == filtro_pago]
-    else:
-        df_show = df
+        df_show = df_show[df_show['estado_pago'] == filtro_pago]
+    if filtro_cliente != "Todos":
+        df_show = df_show[df_show['descripcion'] == filtro_cliente]
 
     st.dataframe(df_show, use_container_width=True)
 
