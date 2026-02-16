@@ -3,14 +3,17 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 import hashlib
+from pathlib import Path
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
 st.title("🐄 Gestión de Stock y Pagos - Cueros")
 
+DB_PATH = Path(__file__).resolve().parent / "cueros.db"
+
 # --- FUNCIONES DE BASE DE DATOS ---
 def init_db():
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     # Tabla única para registrar todo (ingresos y egresos)
     c.execute('''
@@ -66,7 +69,7 @@ def init_db():
     conn.close()
 
 def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
@@ -78,13 +81,13 @@ def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total
     conn.close()
 
 def obtener_datos():
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     df = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
     conn.close()
     return df
 
 def autenticar_usuario(usuario, password):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
     c.execute('SELECT usuario, rol, activo FROM usuarios WHERE usuario = ? AND password_hash = ?',
@@ -96,7 +99,7 @@ def autenticar_usuario(usuario, password):
     return None
 
 def crear_usuario(usuario, password, rol):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
     c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
@@ -105,28 +108,35 @@ def crear_usuario(usuario, password, rol):
     conn.close()
 
 def obtener_usuarios():
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     df_users = pd.read_sql_query("SELECT id, usuario, rol, activo FROM usuarios ORDER BY id ASC", conn)
     conn.close()
     return df_users
 
 def actualizar_estado_usuario(user_id, activo):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('UPDATE usuarios SET activo = ? WHERE id = ?', (1 if activo else 0, user_id))
     conn.commit()
     conn.close()
 
 def actualizar_password(user_id, new_password):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     password_hash = hashlib.sha256(new_password.encode('utf-8')).hexdigest()
     c.execute('UPDATE usuarios SET password_hash = ? WHERE id = ?', (password_hash, user_id))
     conn.commit()
     conn.close()
 
+def actualizar_rol_usuario(user_id, rol):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('UPDATE usuarios SET rol = ? WHERE id = ? AND usuario != ?', (rol, user_id, 'admin'))
+    conn.commit()
+    conn.close()
+
 def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('''
         UPDATE movimientos
@@ -137,7 +147,7 @@ def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg
     conn.close()
 
 def eliminar_movimiento(mov_id):
-    conn = sqlite3.connect('cueros.db')
+    conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute('DELETE FROM movimientos WHERE id = ?', (mov_id,))
     conn.commit()
@@ -188,50 +198,53 @@ if not st.session_state.auth:
 # --- BARRA LATERAL (ENTRADA DE DATOS) ---
 st.sidebar.header("Nuevo Registro")
 
-tipo_operacion = st.sidebar.selectbox("Tipo de Operación", ["Ingreso (Compra)", "Egreso (Venta)"])
-producto = st.sidebar.selectbox("Producto", ["Sal", "Cueros"])
-desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
-col1, col2 = st.sidebar.columns(2)
-cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
-peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
-precio_kg = st.sidebar.number_input("Precio por kg ($)", min_value=0.0, step=10.0)
-iva_opcion = st.sidebar.selectbox("IVA", ["0%", "10.5%", "21%"])
-modo_pago = st.sidebar.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"])
-detalle_pago = st.sidebar.text_input("Detalle del pago (opcional)")
-dinero_a_cuenta = st.sidebar.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0)
-estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
+if st.session_state.auth['rol'] == 'admin':
+    tipo_operacion = st.sidebar.selectbox("Tipo de Operación", ["Ingreso (Compra)", "Egreso (Venta)"])
+    producto = st.sidebar.selectbox("Producto", ["Sal", "Cueros"])
+    desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+    col1, col2 = st.sidebar.columns(2)
+    cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
+    peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
+    precio_kg = st.sidebar.number_input("Precio por kg ($)", min_value=0.0, step=10.0)
+    iva_opcion = st.sidebar.selectbox("IVA", ["0%", "10.5%", "21%"])
+    modo_pago = st.sidebar.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"])
+    detalle_pago = st.sidebar.text_input("Detalle del pago (opcional)")
+    dinero_a_cuenta = st.sidebar.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0)
+    estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
 
-iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
-iva_rate = iva_map[iva_opcion]
-neto = precio_kg * peso_input
-total_con_iva = neto * (1 + iva_rate)
-promedio_unidad = (neto / cant_input) if cant_input > 0 else 0.0
+    iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
+    iva_rate = iva_map[iva_opcion]
+    neto = precio_kg * peso_input
+    total_con_iva = neto * (1 + iva_rate)
+    promedio_unidad = (neto / cant_input) if cant_input > 0 else 0.0
 
-st.sidebar.markdown("**Detalle de calculo**")
-st.sidebar.write(f"Neto: ${neto:,.2f}")
-st.sidebar.write(f"Total con IVA: ${total_con_iva:,.2f}")
-st.sidebar.write(f"Promedio por unidad: ${promedio_unidad:,.2f}")
+    st.sidebar.markdown("**Detalle de calculo**")
+    st.sidebar.write(f"Neto: ${neto:,.2f}")
+    st.sidebar.write(f"Total con IVA: ${total_con_iva:,.2f}")
+    st.sidebar.write(f"Promedio por unidad: ${promedio_unidad:,.2f}")
 
-if st.sidebar.button("Guardar Movimiento"):
-    if desc_input:
-        agregar_movimiento(
-            tipo_operacion,
-            producto,
-            desc_input,
-            cant_input,
-            peso_input,
-            total_con_iva,
-            neto,
-            iva_rate,
-            modo_pago,
-            detalle_pago,
-            dinero_a_cuenta,
-            estado_pago
-        )
-        st.sidebar.success("¡Registrado con éxito!")
-        st.rerun() # Recargar la página para ver cambios
-    else:
-        st.sidebar.error("Falta la descripción")
+    if st.sidebar.button("Guardar Movimiento"):
+        if desc_input:
+            agregar_movimiento(
+                tipo_operacion,
+                producto,
+                desc_input,
+                cant_input,
+                peso_input,
+                total_con_iva,
+                neto,
+                iva_rate,
+                modo_pago,
+                detalle_pago,
+                dinero_a_cuenta,
+                estado_pago
+            )
+            st.sidebar.success("¡Registrado con éxito!")
+            st.rerun() # Recargar la página para ver cambios
+        else:
+            st.sidebar.error("Falta la descripción")
+else:
+    st.sidebar.info("Solo administradores pueden registrar compras y ventas.")
 
 # --- PANEL PRINCIPAL ---
 
@@ -352,8 +365,13 @@ if not df.empty:
             st.dataframe(df_users, use_container_width=True)
             user_id = st.number_input("ID de usuario", min_value=1, step=1)
             activar = st.checkbox("Activo", value=True)
+            nuevo_rol_admin = st.selectbox("Rol", ["user", "admin"], key="edit_rol")
             nueva_pass_admin = st.text_input("Nueva contrasena (opcional)", type="password", key="reset_pass")
             if st.button("Actualizar usuario"):
+                if user_id == 1:
+                    st.warning("No se puede cambiar el rol del admin principal")
+                else:
+                    actualizar_rol_usuario(user_id, nuevo_rol_admin)
                 actualizar_estado_usuario(user_id, activar)
                 if nueva_pass_admin:
                     actualizar_password(user_id, nueva_pass_admin)
