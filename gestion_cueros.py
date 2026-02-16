@@ -27,6 +27,7 @@ def init_db():
             iva_rate REAL,
             modo_pago TEXT,
             detalle_pago TEXT,
+            dinero_a_cuenta REAL,
             estado_pago TEXT -- 'Pagado' o 'Impago'
         )
     ''')
@@ -43,6 +44,8 @@ def init_db():
         c.execute('ALTER TABLE movimientos ADD COLUMN detalle_pago TEXT')
     if 'producto' not in columnas:
         c.execute('ALTER TABLE movimientos ADD COLUMN producto TEXT')
+    if 'dinero_a_cuenta' not in columnas:
+        c.execute('ALTER TABLE movimientos ADD COLUMN dinero_a_cuenta REAL')
     # Tabla de usuarios
     c.execute('''
         CREATE TABLE IF NOT EXISTS usuarios (
@@ -62,15 +65,15 @@ def init_db():
     conn.commit()
     conn.close()
 
-def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado):
+def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     c.execute('''
         INSERT INTO movimientos
-        (fecha, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (fecha, tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado))
+        (fecha, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+    ''', (fecha, tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado))
     conn.commit()
     conn.close()
 
@@ -122,14 +125,14 @@ def actualizar_password(user_id, new_password):
     conn.commit()
     conn.close()
 
-def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago):
+def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago):
     conn = sqlite3.connect('cueros.db')
     c = conn.cursor()
     c.execute('''
         UPDATE movimientos
-        SET tipo = ?, producto = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, modo_pago = ?, detalle_pago = ?, estado_pago = ?
+        SET tipo = ?, producto = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, modo_pago = ?, detalle_pago = ?, dinero_a_cuenta = ?, estado_pago = ?
         WHERE id = ?
-    ''', (tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, estado_pago, mov_id))
+    ''', (tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago, mov_id))
     conn.commit()
     conn.close()
 
@@ -148,7 +151,7 @@ def confirmar_eliminacion(mov_id, descripcion, total):
     col_c1, col_c2 = st.columns(2)
     if col_c1.button("Eliminar"):
         eliminar_movimiento(mov_id)
-        st.success("Movimiento eliminado")
+        st.session_state.last_deleted = mov_id
         st.rerun()
     if col_c2.button("Cancelar"):
         st.rerun()
@@ -195,6 +198,7 @@ precio_kg = st.sidebar.number_input("Precio por kg ($)", min_value=0.0, step=10.
 iva_opcion = st.sidebar.selectbox("IVA", ["0%", "10.5%", "21%"])
 modo_pago = st.sidebar.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"])
 detalle_pago = st.sidebar.text_input("Detalle del pago (opcional)")
+dinero_a_cuenta = st.sidebar.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0)
 estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
 
 iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
@@ -221,6 +225,7 @@ if st.sidebar.button("Guardar Movimiento"):
             iva_rate,
             modo_pago,
             detalle_pago,
+            dinero_a_cuenta,
             estado_pago
         )
         st.sidebar.success("¡Registrado con éxito!")
@@ -234,6 +239,9 @@ if st.sidebar.button("Guardar Movimiento"):
 df = obtener_datos()
 
 if not df.empty:
+    if 'last_deleted' in st.session_state and st.session_state.last_deleted is not None:
+        st.success(f"Movimiento eliminado (ID {st.session_state.last_deleted})")
+        st.session_state.last_deleted = None
     # Filtros
     st.subheader("Filtros")
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 3, 1])
@@ -298,7 +306,7 @@ if not df.empty:
         df_show_display['iva_%'] = (df_show_display['iva_rate'].fillna(0) * 100).round(1)
     columnas_base = [
         'id', 'fecha', 'tipo', 'producto', 'descripcion', 'cantidad', 'peso_kg',
-        'neto', 'iva_%', 'precio_total', 'modo_pago', 'detalle_pago', 'estado_pago'
+        'neto', 'iva_%', 'precio_total', 'modo_pago', 'detalle_pago', 'dinero_a_cuenta', 'estado_pago'
     ]
     columnas_disponibles = [c for c in columnas_base if c in df_show_display.columns]
     df_show_display = df_show_display[columnas_disponibles]
@@ -365,6 +373,7 @@ if not df.empty:
             iva_edit = st.selectbox("IVA", ["0%", "10.5%", "21%"], key="mov_iva")
             modo_pago_edit = st.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"], key="mov_modo")
             detalle_pago_edit = st.text_input("Detalle del pago (opcional)", key="mov_detalle")
+            dinero_a_cuenta_edit = st.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0, key="mov_cuenta")
             estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
 
             iva_rate_edit = iva_map[iva_edit]
@@ -388,12 +397,31 @@ if not df.empty:
                         iva_rate_edit,
                         modo_pago_edit,
                         detalle_pago_edit,
+                        dinero_a_cuenta_edit,
                         estado_edit
                     )
                     st.success("Movimiento actualizado")
                     st.rerun()
                 else:
                     st.error("Falta la descripcion")
+
+    # --- RESUMEN POR CLIENTE ---
+    st.markdown("---")
+    st.subheader("Resumen por Cliente")
+    clientes_resumen = sorted(df['descripcion'].dropna().unique().tolist())
+    opciones_resumen = ["Todos"] + clientes_resumen
+    cliente_resumen = st.selectbox("Selecciona un cliente", opciones_resumen, key="cliente_resumen")
+    df_cliente = df
+    if cliente_resumen != "Todos":
+        df_cliente = df_cliente[df_cliente['descripcion'] == cliente_resumen]
+
+    ingresos_cliente = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']
+    egresos_cliente = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']
+
+    st.write("Ingresos (Compras)")
+    st.dataframe(ingresos_cliente, use_container_width=True)
+    st.write("Egresos (Ventas)")
+    st.dataframe(egresos_cliente, use_container_width=True)
 
 else:
     st.info("Aún no hay movimientos registrados. Usa el menú de la izquierda.")
