@@ -1,0 +1,267 @@
+import streamlit as st
+import pandas as pd
+import sqlite3
+from datetime import datetime
+import hashlib
+
+# --- CONFIGURACIÓN DE LA PÁGINA ---
+st.set_page_config(page_title="Gestión Cueros", layout="wide")
+st.title("🐄 Gestión de Stock y Pagos - Cueros")
+
+# --- FUNCIONES DE BASE DE DATOS ---
+def init_db():
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    # Tabla única para registrar todo (ingresos y egresos)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS movimientos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            tipo TEXT, -- 'Ingreso' (Compra) o 'Egreso' (Venta)
+            descripcion TEXT, -- Tipo de cuero o Cliente
+            cantidad INTEGER,
+            peso_kg REAL,
+            precio_total REAL,
+            estado_pago TEXT -- 'Pagado' o 'Impago'
+        )
+    ''')
+    # Tabla de usuarios
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario TEXT UNIQUE,
+            password_hash TEXT,
+            rol TEXT, -- 'admin' o 'user'
+            activo INTEGER -- 1 activo, 0 inactivo
+        )
+    ''')
+    # Crear admin por defecto si no existe
+    c.execute('SELECT COUNT(*) FROM usuarios')
+    if c.fetchone()[0] == 0:
+        password_hash = hashlib.sha256('admin'.encode('utf-8')).hexdigest()
+        c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
+                  ('admin', password_hash, 'admin', 1))
+    conn.commit()
+    conn.close()
+
+def agregar_movimiento(tipo, descripcion, cantidad, peso, precio, estado):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('INSERT INTO movimientos (fecha, tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago) VALUES (?,?,?,?,?,?,?)',
+              (fecha, tipo, descripcion, cantidad, peso, precio, estado))
+    conn.commit()
+    conn.close()
+
+def obtener_datos():
+    conn = sqlite3.connect('cueros.db')
+    df = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
+    conn.close()
+    return df
+
+def autenticar_usuario(usuario, password):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+    c.execute('SELECT usuario, rol, activo FROM usuarios WHERE usuario = ? AND password_hash = ?',
+              (usuario, password_hash))
+    row = c.fetchone()
+    conn.close()
+    if row and row[2] == 1:
+        return {'usuario': row[0], 'rol': row[1]}
+    return None
+
+def crear_usuario(usuario, password, rol):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+    c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
+              (usuario, password_hash, rol, 1))
+    conn.commit()
+    conn.close()
+
+def obtener_usuarios():
+    conn = sqlite3.connect('cueros.db')
+    df_users = pd.read_sql_query("SELECT id, usuario, rol, activo FROM usuarios ORDER BY id ASC", conn)
+    conn.close()
+    return df_users
+
+def actualizar_estado_usuario(user_id, activo):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    c.execute('UPDATE usuarios SET activo = ? WHERE id = ?', (1 if activo else 0, user_id))
+    conn.commit()
+    conn.close()
+
+def actualizar_password(user_id, new_password):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    password_hash = hashlib.sha256(new_password.encode('utf-8')).hexdigest()
+    c.execute('UPDATE usuarios SET password_hash = ? WHERE id = ?', (password_hash, user_id))
+    conn.commit()
+    conn.close()
+
+def actualizar_movimiento(mov_id, tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago):
+    conn = sqlite3.connect('cueros.db')
+    c = conn.cursor()
+    c.execute('''
+        UPDATE movimientos
+        SET tipo = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, estado_pago = ?
+        WHERE id = ?
+    ''', (tipo, descripcion, cantidad, peso_kg, precio_total, estado_pago, mov_id))
+    conn.commit()
+    conn.close()
+
+# Inicializar DB al arrancar
+init_db()
+
+# --- LOGIN ---
+if 'auth' not in st.session_state:
+    st.session_state.auth = None
+
+with st.sidebar.expander("Acceso", expanded=True):
+    if st.session_state.auth:
+        st.write(f"Usuario: {st.session_state.auth['usuario']}")
+        st.write(f"Rol: {st.session_state.auth['rol']}")
+        if st.button("Cerrar sesion"):
+            st.session_state.auth = None
+            st.rerun()
+    else:
+        user_input = st.text_input("Usuario", key="login_user")
+        pass_input = st.text_input("Contrasena", type="password", key="login_pass")
+        if st.button("Ingresar"):
+            auth = autenticar_usuario(user_input, pass_input)
+            if auth:
+                st.session_state.auth = auth
+                st.success("Ingreso correcto")
+                st.rerun()
+            else:
+                st.error("Usuario o contrasena incorrectos, o usuario inactivo")
+
+if not st.session_state.auth:
+    st.stop()
+
+# --- BARRA LATERAL (ENTRADA DE DATOS) ---
+st.sidebar.header("Nuevo Registro")
+
+tipo_operacion = st.sidebar.selectbox("Tipo de Operación", ["Ingreso (Compra)", "Egreso (Venta)"])
+desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+col1, col2 = st.sidebar.columns(2)
+cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
+peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
+precio_input = st.sidebar.number_input("Monto Total ($)", min_value=0.0, step=100.0)
+estado_pago = st.sidebar.radio("Estado del Pago", ["Pagado", "Impago"])
+
+if st.sidebar.button("Guardar Movimiento"):
+    if desc_input:
+        agregar_movimiento(tipo_operacion, desc_input, cant_input, peso_input, precio_input, estado_pago)
+        st.sidebar.success("¡Registrado con éxito!")
+        st.rerun() # Recargar la página para ver cambios
+    else:
+        st.sidebar.error("Falta la descripción")
+
+# --- PANEL PRINCIPAL ---
+
+# 1. Obtener datos
+df = obtener_datos()
+
+if not df.empty:
+    # 2. Cálculos de Stock y Finanzas
+    ingresos = df[df['tipo'] == 'Ingreso (Compra)']
+    egresos = df[df['tipo'] == 'Egreso (Venta)']
+    
+    stock_actual_u = ingresos['cantidad'].sum() - egresos['cantidad'].sum()
+    stock_actual_kg = ingresos['peso_kg'].sum() - egresos['peso_kg'].sum()
+    
+    # Deudas (Lo que debo pagar por compras impagas)
+    deuda_compras = ingresos[ingresos['estado_pago'] == 'Impago']['precio_total'].sum()
+    # A cobrar (Lo que me deben por ventas impagas)
+    a_cobrar_ventas = egresos[egresos['estado_pago'] == 'Impago']['precio_total'].sum()
+    # Dinero esperado (cobrado ventas - pagado compras)
+    cobrado_ventas = egresos[egresos['estado_pago'] == 'Pagado']['precio_total'].sum()
+    pagado_compras = ingresos[ingresos['estado_pago'] == 'Pagado']['precio_total'].sum()
+    dinero_esperado = cobrado_ventas - pagado_compras
+
+    # 3. Métricas en tarjetas
+    col_a, col_b, col_c, col_d, col_e = st.columns(5)
+    col_a.metric("Stock (Unidades)", f"{stock_actual_u} u.")
+    col_b.metric("Stock (Peso)", f"{stock_actual_kg:.1f} kg")
+    col_c.metric("Por Cobrar (Ventas)", f"${a_cobrar_ventas:,.2f}", delta_color="normal")
+    col_d.metric("Por Pagar (Compras)", f"${deuda_compras:,.2f}", delta_color="inverse")
+    col_e.metric("Dinero Esperado", f"${dinero_esperado:,.2f}")
+
+    st.markdown("---")
+
+    # 4. Tabla interactiva
+    st.subheader("📋 Registro de Movimientos")
+    
+    # Filtro rápido
+    filtro_pago = st.selectbox("Filtrar por estado de pago:", ["Todos", "Impago", "Pagado"])
+    if filtro_pago != "Todos":
+        df_show = df[df['estado_pago'] == filtro_pago]
+    else:
+        df_show = df
+
+    st.dataframe(df_show, use_container_width=True)
+
+    # --- ADMINISTRACION ---
+    if st.session_state.auth['rol'] == 'admin':
+        st.markdown("---")
+        st.subheader("Administracion de Usuarios")
+
+        with st.expander("Crear usuario"):
+            nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
+            nueva_pass = st.text_input("Contrasena", type="password", key="new_pass")
+            nuevo_rol = st.selectbox("Rol", ["user", "admin"], key="new_role")
+            if st.button("Crear"):
+                if nuevo_usuario and nueva_pass:
+                    try:
+                        crear_usuario(nuevo_usuario, nueva_pass, nuevo_rol)
+                        st.success("Usuario creado")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("El usuario ya existe")
+                else:
+                    st.error("Completa usuario y contrasena")
+
+        with st.expander("Gestionar usuarios"):
+            df_users = obtener_usuarios()
+            st.dataframe(df_users, use_container_width=True)
+            user_id = st.number_input("ID de usuario", min_value=1, step=1)
+            activar = st.checkbox("Activo", value=True)
+            nueva_pass_admin = st.text_input("Nueva contrasena (opcional)", type="password", key="reset_pass")
+            if st.button("Actualizar usuario"):
+                actualizar_estado_usuario(user_id, activar)
+                if nueva_pass_admin:
+                    actualizar_password(user_id, nueva_pass_admin)
+                st.success("Usuario actualizado")
+                st.rerun()
+
+        st.subheader("Administracion de Movimientos")
+        with st.expander("Editar movimiento"):
+            mov_id = st.number_input("ID de movimiento", min_value=1, step=1, key="mov_id")
+            tipo_edit = st.selectbox("Tipo de Operacion", ["Ingreso (Compra)", "Egreso (Venta)"], key="mov_tipo")
+            desc_edit = st.text_input("Descripcion / Cliente / Proveedor", key="mov_desc")
+            col_m1, col_m2 = st.columns(2)
+            cant_edit = col_m1.number_input("Cantidad (Unidades)", min_value=1, step=1, key="mov_cant")
+            peso_edit = col_m2.number_input("Peso Total (kg)", min_value=0.0, step=0.1, key="mov_peso")
+            monto_edit = st.number_input("Monto Total ($)", min_value=0.0, step=100.0, key="mov_monto")
+            estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
+            if st.button("Actualizar movimiento"):
+                if desc_edit:
+                    actualizar_movimiento(
+                        mov_id,
+                        tipo_edit,
+                        desc_edit,
+                        cant_edit,
+                        peso_edit,
+                        monto_edit,
+                        estado_edit
+                    )
+                    st.success("Movimiento actualizado")
+                    st.rerun()
+                else:
+                    st.error("Falta la descripcion")
+
+else:
+    st.info("Aún no hay movimientos registrados. Usa el menú de la izquierda.")
