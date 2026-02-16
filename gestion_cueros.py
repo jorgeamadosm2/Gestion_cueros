@@ -160,6 +160,13 @@ def eliminar_movimiento(mov_id):
     conn.commit()
     conn.close()
 
+def eliminar_movimientos_cliente(cliente):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM movimientos WHERE descripcion = ?', (cliente,))
+    conn.commit()
+    conn.close()
+
 @st.dialog("Confirmar eliminacion")
 def confirmar_eliminacion(mov_id, descripcion, total):
     st.write(f"ID: {mov_id}")
@@ -196,6 +203,7 @@ with st.sidebar.expander("Acceso", expanded=True):
     if st.session_state.auth:
         st.write(f"Usuario: {st.session_state.auth['usuario']}")
         st.write(f"Rol: {st.session_state.auth['rol']}")
+        st.caption(f"DB: {DB_PATH}")
         if st.button("Cerrar sesion"):
             st.session_state.auth = None
             st.rerun()
@@ -362,98 +370,6 @@ if not df.empty:
             if col_del.button("X", key=f"del_{mov_id}"):
                 confirmar_eliminacion(mov_id, descripcion, total)
 
-    # --- ADMINISTRACION ---
-    if st.session_state.auth['rol'] == 'admin':
-        st.markdown("---")
-        st.subheader("Administracion de Usuarios")
-
-        with st.expander("Crear usuario"):
-            nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
-            nueva_pass = st.text_input("Contrasena", type="password", key="new_pass")
-            nuevo_rol = st.selectbox("Rol", ["user", "admin"], key="new_role")
-            if st.button("Crear"):
-                if nuevo_usuario and nueva_pass:
-                    try:
-                        crear_usuario(nuevo_usuario, nueva_pass, nuevo_rol)
-                        st.success("Usuario creado")
-                        st.rerun()
-                    except sqlite3.IntegrityError:
-                        st.error("El usuario ya existe")
-                else:
-                    st.error("Completa usuario y contrasena")
-
-        with st.expander("Gestionar usuarios"):
-            df_users = obtener_usuarios()
-            st.dataframe(df_users, use_container_width=True)
-            user_id = st.number_input("ID de usuario", min_value=1, step=1)
-            activar = st.checkbox("Activo", value=True)
-            nuevo_rol_admin = st.selectbox("Rol", ["user", "admin"], key="edit_rol")
-            nueva_pass_admin = st.text_input("Nueva contrasena (opcional)", type="password", key="reset_pass")
-            if st.button("Actualizar usuario"):
-                if user_id == 1:
-                    st.warning("No se puede cambiar el rol del admin principal")
-                else:
-                    actualizar_rol_usuario(user_id, nuevo_rol_admin)
-                actualizar_estado_usuario(user_id, activar)
-                if nueva_pass_admin:
-                    actualizar_password(user_id, nueva_pass_admin)
-                st.success("Usuario actualizado")
-                st.rerun()
-
-            st.markdown("---")
-            if st.button("Eliminar usuario"):
-                if user_id == 1:
-                    st.warning("No se puede eliminar el admin principal")
-                else:
-                    usuario_row = df_users[df_users['id'] == user_id]
-                    usuario_nombre = usuario_row['usuario'].iloc[0] if not usuario_row.empty else ""
-                    confirmar_eliminacion_usuario(user_id, usuario_nombre)
-
-        st.subheader("Administracion de Movimientos")
-        with st.expander("Editar movimiento"):
-            mov_id = st.number_input("ID de movimiento", min_value=1, step=1, key="mov_id")
-            tipo_edit = st.selectbox("Tipo de Operacion", ["Ingreso (Compra)", "Egreso (Venta)"], key="mov_tipo")
-            producto_edit = st.selectbox("Producto", ["Sal", "Cueros"], key="mov_producto")
-            desc_edit = st.text_input("Descripcion / Cliente / Proveedor", key="mov_desc")
-            col_m1, col_m2 = st.columns(2)
-            cant_edit = col_m1.number_input("Cantidad (Unidades)", min_value=1, step=1, key="mov_cant")
-            peso_edit = col_m2.number_input("Peso Total (kg)", min_value=0.0, step=0.1, key="mov_peso")
-            precio_kg_edit = st.number_input("Precio por kg ($)", min_value=0.0, step=10.0, key="mov_precio_kg")
-            iva_edit = st.selectbox("IVA", ["0%", "10.5%", "21%"], key="mov_iva")
-            modo_pago_edit = st.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"], key="mov_modo")
-            detalle_pago_edit = st.text_input("Detalle del pago (opcional)", key="mov_detalle")
-            dinero_a_cuenta_edit = st.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0, key="mov_cuenta")
-            estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
-
-            iva_rate_edit = iva_map[iva_edit]
-            neto_edit = precio_kg_edit * peso_edit
-            total_con_iva_edit = neto_edit * (1 + iva_rate_edit)
-            promedio_unidad_edit = (neto_edit / cant_edit) if cant_edit > 0 else 0.0
-            st.write(f"Neto: ${neto_edit:,.2f}")
-            st.write(f"Total con IVA: ${total_con_iva_edit:,.2f}")
-            st.write(f"Promedio por unidad: ${promedio_unidad_edit:,.2f}")
-            if st.button("Actualizar movimiento"):
-                if desc_edit:
-                    actualizar_movimiento(
-                        mov_id,
-                        tipo_edit,
-                        producto_edit,
-                        desc_edit,
-                        cant_edit,
-                        peso_edit,
-                        total_con_iva_edit,
-                        neto_edit,
-                        iva_rate_edit,
-                        modo_pago_edit,
-                        detalle_pago_edit,
-                        dinero_a_cuenta_edit,
-                        estado_edit
-                    )
-                    st.success("Movimiento actualizado")
-                    st.rerun()
-                else:
-                    st.error("Falta la descripcion")
-
     # --- RESUMEN POR CLIENTE ---
     st.markdown("---")
     st.subheader("Resumen por Cliente")
@@ -463,6 +379,12 @@ if not df.empty:
     df_cliente = df
     if cliente_resumen != "Todos":
         df_cliente = df_cliente[df_cliente['descripcion'] == cliente_resumen]
+
+    if st.session_state.auth['rol'] == 'admin' and cliente_resumen != "Todos":
+        if st.button("Eliminar todos los movimientos de este cliente"):
+            eliminar_movimientos_cliente(cliente_resumen)
+            st.success("Movimientos eliminados")
+            st.rerun()
 
     ingresos_cliente = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']
     egresos_cliente = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']
@@ -474,3 +396,96 @@ if not df.empty:
 
 else:
     st.info("Aún no hay movimientos registrados. Usa el menú de la izquierda.")
+
+# --- ADMINISTRACION DE USUARIOS ---
+if st.session_state.auth['rol'] == 'admin':
+    st.markdown("---")
+    st.subheader("Administracion de Usuarios")
+
+    with st.expander("Crear usuario"):
+        nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
+        nueva_pass = st.text_input("Contrasena", type="password", key="new_pass")
+        nuevo_rol = st.selectbox("Rol", ["user", "admin"], key="new_role")
+        if st.button("Crear"):
+            if nuevo_usuario and nueva_pass:
+                try:
+                    crear_usuario(nuevo_usuario, nueva_pass, nuevo_rol)
+                    st.success("Usuario creado")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("El usuario ya existe")
+            else:
+                st.error("Completa usuario y contrasena")
+
+    with st.expander("Gestionar usuarios"):
+        df_users = obtener_usuarios()
+        st.dataframe(df_users, use_container_width=True)
+        user_id = st.number_input("ID de usuario", min_value=1, step=1)
+        activar = st.checkbox("Activo", value=True)
+        nuevo_rol_admin = st.selectbox("Rol", ["user", "admin"], key="edit_rol")
+        nueva_pass_admin = st.text_input("Nueva contrasena (opcional)", type="password", key="reset_pass")
+        if st.button("Actualizar usuario"):
+            if user_id == 1:
+                st.warning("No se puede cambiar el rol del admin principal")
+            else:
+                actualizar_rol_usuario(user_id, nuevo_rol_admin)
+            actualizar_estado_usuario(user_id, activar)
+            if nueva_pass_admin:
+                actualizar_password(user_id, nueva_pass_admin)
+            st.success("Usuario actualizado")
+            st.rerun()
+
+        st.markdown("---")
+        if st.button("Eliminar usuario"):
+            if user_id == 1:
+                st.warning("No se puede eliminar el admin principal")
+            else:
+                usuario_row = df_users[df_users['id'] == user_id]
+                usuario_nombre = usuario_row['usuario'].iloc[0] if not usuario_row.empty else ""
+                confirmar_eliminacion_usuario(user_id, usuario_nombre)
+
+    st.subheader("Administracion de Movimientos")
+    with st.expander("Editar movimiento"):
+        mov_id = st.number_input("ID de movimiento", min_value=1, step=1, key="mov_id")
+        tipo_edit = st.selectbox("Tipo de Operacion", ["Ingreso (Compra)", "Egreso (Venta)"], key="mov_tipo")
+        producto_edit = st.selectbox("Producto", ["Sal", "Cueros"], key="mov_producto")
+        desc_edit = st.text_input("Descripcion / Cliente / Proveedor", key="mov_desc")
+        col_m1, col_m2 = st.columns(2)
+        cant_edit = col_m1.number_input("Cantidad (Unidades)", min_value=1, step=1, key="mov_cant")
+        peso_edit = col_m2.number_input("Peso Total (kg)", min_value=0.0, step=0.1, key="mov_peso")
+        precio_kg_edit = st.number_input("Precio por kg ($)", min_value=0.0, step=10.0, key="mov_precio_kg")
+        iva_map = {"0%": 0.0, "10.5%": 0.105, "21%": 0.21}
+        iva_edit = st.selectbox("IVA", ["0%", "10.5%", "21%"], key="mov_iva")
+        modo_pago_edit = st.selectbox("Modo de Pago", ["Efectivo", "A cuenta", "Cheque", "Otros productos"], key="mov_modo")
+        detalle_pago_edit = st.text_input("Detalle del pago (opcional)", key="mov_detalle")
+        dinero_a_cuenta_edit = st.number_input("Dinero a cuenta ($)", min_value=0.0, step=100.0, key="mov_cuenta")
+        estado_edit = st.selectbox("Estado de Pago", ["Pagado", "Impago"], key="mov_estado")
+
+        iva_rate_edit = iva_map[iva_edit]
+        neto_edit = precio_kg_edit * peso_edit
+        total_con_iva_edit = neto_edit * (1 + iva_rate_edit)
+        promedio_unidad_edit = (neto_edit / cant_edit) if cant_edit > 0 else 0.0
+        st.write(f"Neto: ${neto_edit:,.2f}")
+        st.write(f"Total con IVA: ${total_con_iva_edit:,.2f}")
+        st.write(f"Promedio por unidad: ${promedio_unidad_edit:,.2f}")
+        if st.button("Actualizar movimiento"):
+            if desc_edit:
+                actualizar_movimiento(
+                    mov_id,
+                    tipo_edit,
+                    producto_edit,
+                    desc_edit,
+                    cant_edit,
+                    peso_edit,
+                    total_con_iva_edit,
+                    neto_edit,
+                    iva_rate_edit,
+                    modo_pago_edit,
+                    detalle_pago_edit,
+                    dinero_a_cuenta_edit,
+                    estado_edit
+                )
+                st.success("Movimiento actualizado")
+                st.rerun()
+            else:
+                st.error("Falta la descripcion")
