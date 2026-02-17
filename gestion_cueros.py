@@ -525,7 +525,7 @@ if not df.empty:
         df_cliente = df_cliente[df_cliente['descripcion'] == cliente_resumen]
 
     if st.session_state.auth['rol'] == 'admin' and cliente_resumen != "Todos":
-        if st.button("Eliminar todos los movimientos de este cliente"):
+        if st.button("Eliminar todos los movimientos de este cliente", key="btn_eliminar_movs_cliente"):
             eliminar_movimientos_cliente(cliente_resumen)
             st.success("Movimientos eliminados")
             st.rerun()
@@ -554,7 +554,7 @@ if st.session_state.auth['rol'] == 'admin':
         nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
         nueva_pass = st.text_input("Contrasena", type="password", key="new_pass")
         nuevo_rol = st.selectbox("Rol", ["user", "admin"], key="new_role")
-        if st.button("Crear"):
+        if st.button("Crear", key="btn_crear_usuario"):
             if nuevo_usuario and nueva_pass:
                 try:
                     crear_usuario(nuevo_usuario, nueva_pass, nuevo_rol)
@@ -568,11 +568,11 @@ if st.session_state.auth['rol'] == 'admin':
     with st.expander("Gestionar usuarios"):
         df_users = obtener_usuarios()
         st.dataframe(df_users, use_container_width=True)
-        user_id = st.number_input("ID de usuario", min_value=1, step=1)
-        activar = st.checkbox("Activo", value=True)
+        user_id = st.number_input("ID de usuario", min_value=1, step=1, key="manage_user_id")
+        activar = st.checkbox("Activo", value=True, key="manage_user_activo")
         nuevo_rol_admin = st.selectbox("Rol", ["user", "admin"], key="edit_rol")
         nueva_pass_admin = st.text_input("Nueva contrasena (opcional)", type="password", key="reset_pass")
-        if st.button("Actualizar usuario"):
+        if st.button("Actualizar usuario", key="btn_actualizar_usuario"):
             if user_id == 1:
                 st.warning("No se puede cambiar el rol del admin principal")
             else:
@@ -584,7 +584,7 @@ if st.session_state.auth['rol'] == 'admin':
             st.rerun()
 
         st.markdown("---")
-        if st.button("Eliminar usuario"):
+        if st.button("Eliminar usuario", key="btn_eliminar_usuario"):
             if user_id == 1:
                 st.warning("No se puede eliminar el admin principal")
             else:
@@ -616,7 +616,7 @@ if st.session_state.auth['rol'] == 'admin':
         st.write(f"Neto: ${neto_edit:,.2f}")
         st.write(f"Total con IVA: ${total_con_iva_edit:,.2f}")
         st.write(f"Promedio por unidad: ${promedio_unidad_edit:,.2f}")
-        if st.button("Actualizar movimiento"):
+        if st.button("Actualizar movimiento", key="btn_actualizar_movimiento"):
             if desc_edit:
                 actualizar_movimiento(
                     mov_id,
@@ -654,7 +654,7 @@ if st.session_state.auth['rol'] == 'admin':
         email_cliente = col_email.text_input("Email", key="new_cliente_email")
         direccion_cliente = st.text_input("Dirección", key="new_cliente_direccion")
         notas_cliente = st.text_area("Notas adicionales", key="new_cliente_notas")
-        if st.button("Crear"):
+        if st.button("Crear", key="btn_crear_cliente"):
             if nombre_cliente:
                 try:
                     crear_cliente(nombre_cliente, tipo_cliente, contacto_cliente, telefono_cliente, email_cliente, direccion_cliente, notas_cliente)
@@ -691,7 +691,7 @@ if st.session_state.auth['rol'] == 'admin':
             notas_edit = st.text_area("Notas", key="edit_cliente_notas")
             activo_edit = st.checkbox("Activo", value=True, key="edit_cliente_activo")
         
-        if st.button("Actualizar cliente"):
+        if st.button("Actualizar cliente", key="btn_actualizar_cliente"):
             if nombre_edit:
                 try:
                     actualizar_cliente(cliente_id, nombre_edit, tipo_edit, contacto_edit, telefono_edit, email_edit, direccion_edit, notas_edit, activo_edit)
@@ -703,7 +703,7 @@ if st.session_state.auth['rol'] == 'admin':
                 st.error("Completa el nombre del cliente")
 
         st.markdown("---")
-        if st.button("Eliminar cliente"):
+        if st.button("Eliminar cliente", key="btn_eliminar_cliente"):
             cliente_del = obtener_cliente_por_id(cliente_id)
             if cliente_del:
                 confirmar_eliminacion_cliente(cliente_id, cliente_del['nombre'])
