@@ -88,6 +88,17 @@ def init_db():
             fecha_creacion TEXT
         )
     ''')
+    # Tabla de pagos a cuenta
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS pagos_cuenta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            fecha TEXT,
+            cliente_nombre TEXT,
+            monto REAL,
+            concepto TEXT,
+            tipo TEXT -- 'ingreso' (cliente deja plata) o 'egreso' (se usa saldo)
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -247,6 +258,57 @@ def obtener_cliente_por_id(cliente_id):
         }
     return None
 
+def agregar_pago_cuenta(cliente_nombre, monto, concepto, tipo):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('''
+        INSERT INTO pagos_cuenta (fecha, cliente_nombre, monto, concepto, tipo)
+        VALUES (?,?,?,?,?)
+    ''', (fecha, cliente_nombre, monto, concepto, tipo))
+    conn.commit()
+    conn.close()
+
+def obtener_pagos_cuenta():
+    conn = sqlite3.connect(DB_PATH)
+    df_pagos = pd.read_sql_query("SELECT * FROM pagos_cuenta ORDER BY fecha DESC", conn)
+    conn.close()
+    return df_pagos
+
+def obtener_pagos_cuenta_cliente(cliente_nombre):
+    conn = sqlite3.connect(DB_PATH)
+    df_pagos = pd.read_sql_query(
+        "SELECT * FROM pagos_cuenta WHERE cliente_nombre = ? ORDER BY fecha DESC",
+        conn,
+        params=(cliente_nombre,)
+    )
+    conn.close()
+    return df_pagos
+
+def calcular_saldo_cliente(cliente_nombre):
+    conn = sqlite3.connect(DB_PATH)
+    df_pagos = pd.read_sql_query(
+        "SELECT tipo, monto FROM pagos_cuenta WHERE cliente_nombre = ?",
+        conn,
+        params=(cliente_nombre,)
+    )
+    conn.close()
+    
+    saldo = 0
+    for _, row in df_pagos.iterrows():
+        if row['tipo'] == 'ingreso':
+            saldo += row['monto']
+        else:  # egreso
+            saldo -= row['monto']
+    return saldo
+
+def eliminar_pago_cuenta(pago_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM pagos_cuenta WHERE id = ?', (pago_id,))
+    conn.commit()
+    conn.close()
+
 def guardar_sesion(usuario, rol):
     try:
         with open(SESSION_FILE, 'w') as f:
@@ -304,6 +366,19 @@ def confirmar_eliminacion_cliente(cliente_id, nombre):
     if col_c1.button("Eliminar"):
         eliminar_cliente(cliente_id)
         st.session_state.last_cliente_deleted = cliente_id
+        st.rerun()
+    if col_c2.button("Cancelar"):
+        st.rerun()
+
+@st.dialog("Confirmar eliminacion de pago a cuenta")
+def confirmar_eliminacion_pago(pago_id, cliente, monto):
+    st.write(f"ID: {pago_id}")
+    st.write(f"Cliente: {cliente}")
+    st.write(f"Monto: ${monto:,.2f}")
+    col_c1, col_c2 = st.columns(2)
+    if col_c1.button("Eliminar"):
+        eliminar_pago_cuenta(pago_id)
+        st.session_state.last_pago_deleted = pago_id
         st.rerun()
     if col_c2.button("Cancelar"):
         st.rerun()
@@ -429,6 +504,9 @@ if not df.empty:
     if 'last_cliente_deleted' in st.session_state and st.session_state.last_cliente_deleted is not None:
         st.success(f"Cliente eliminado (ID {st.session_state.last_cliente_deleted})")
         st.session_state.last_cliente_deleted = None
+    if 'last_pago_deleted' in st.session_state and st.session_state.last_pago_deleted is not None:
+        st.success(f"Pago a cuenta eliminado (ID {st.session_state.last_pago_deleted})")
+        st.session_state.last_pago_deleted = None
     # Filtros
     st.subheader("Filtros")
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 3, 1])
@@ -523,6 +601,15 @@ if not df.empty:
     df_cliente = df
     if cliente_resumen != "Todos":
         df_cliente = df_cliente[df_cliente['descripcion'] == cliente_resumen]
+        
+        # Mostrar saldo a cuenta del cliente
+        saldo_cliente = calcular_saldo_cliente(cliente_resumen)
+        if saldo_cliente > 0:
+            st.success(f"💰 Saldo a favor del cliente: ${saldo_cliente:,.2f}")
+        elif saldo_cliente < 0:
+            st.warning(f"💸 Cliente debe: ${abs(saldo_cliente):,.2f}")
+        else:
+            st.info("💵 Sin saldo a cuenta")
 
     if st.session_state.auth['rol'] == 'admin' and cliente_resumen != "Todos":
         if st.button("Eliminar todos los movimientos de este cliente", key="btn_eliminar_movs_cliente"):
@@ -537,6 +624,15 @@ if not df.empty:
     st.dataframe(ingresos_cliente, use_container_width=True)
     st.write("Egresos (Ventas)")
     st.dataframe(egresos_cliente, use_container_width=True)
+    
+    # Mostrar pagos a cuenta del cliente
+    if cliente_resumen != "Todos":
+        st.write("Pagos a Cuenta")
+        df_pagos_cliente = obtener_pagos_cuenta_cliente(cliente_resumen)
+        if not df_pagos_cliente.empty:
+            st.dataframe(df_pagos_cliente, use_container_width=True)
+        else:
+            st.info("No hay pagos a cuenta registrados")
 
 else:
     st.info("Aún no hay movimientos registrados. Usa el menú de la izquierda.")
@@ -709,3 +805,75 @@ if st.session_state.auth['rol'] == 'admin':
                 confirmar_eliminacion_cliente(cliente_id, cliente_del['nombre'])
             else:
                 st.warning("Cliente no encontrado")
+
+    st.markdown("---")
+    st.subheader("Gestion de Pagos a Cuenta")
+
+    with st.expander("Registrar pago a cuenta"):
+        st.info("Registra dinero que el cliente deja a cuenta o cuando se usa saldo")
+        df_clientes_pago = obtener_clientes()
+        if not df_clientes_pago.empty:
+            clientes_activos_pago = df_clientes_pago[df_clientes_pago['activo'] == 1]
+            if not clientes_activos_pago.empty:
+                cliente_pago = st.selectbox(
+                    "Seleccionar cliente",
+                    options=clientes_activos_pago['nombre'].tolist(),
+                    key="pago_cliente"
+                )
+            else:
+                st.warning("No hay clientes activos")
+                cliente_pago = None
+        else:
+            st.warning("No hay clientes registrados")
+            cliente_pago = None
+        
+        if cliente_pago:
+            tipo_pago = st.radio(
+                "Tipo de movimiento",
+                ["Ingreso (cliente deja dinero)", "Egreso (se usa saldo del cliente)"],
+                key="tipo_pago_cuenta"
+            )
+            monto_pago = st.number_input("Monto ($)", min_value=0.0, step=100.0, key="monto_pago")
+            concepto_pago = st.text_area("Concepto / Detalle", key="concepto_pago")
+            
+            if st.button("Registrar pago", key="btn_registrar_pago"):
+                if monto_pago > 0 and concepto_pago:
+                    tipo_db = "ingreso" if "Ingreso" in tipo_pago else "egreso"
+                    agregar_pago_cuenta(cliente_pago, monto_pago, concepto_pago, tipo_db)
+                    st.success(f"Pago a cuenta registrado para {cliente_pago}")
+                    st.rerun()
+                else:
+                    st.error("Completa el monto y el concepto")
+
+    with st.expander("Historial de pagos a cuenta"):
+        df_pagos_todos = obtener_pagos_cuenta()
+        if not df_pagos_todos.empty:
+            # Agregar columna de saldo acumulado por cliente
+            st.dataframe(df_pagos_todos, use_container_width=True)
+            
+            # Mostrar resumen de saldos por cliente
+            st.markdown("**Saldos por cliente:**")
+            clientes_con_saldo = df_pagos_todos['cliente_nombre'].unique()
+            for cliente in clientes_con_saldo:
+                saldo = calcular_saldo_cliente(cliente)
+                if saldo != 0:
+                    color = "🟢" if saldo > 0 else "🔴"
+                    st.write(f"{color} {cliente}: ${saldo:,.2f}")
+        else:
+            st.info("No hay pagos a cuenta registrados")
+
+    with st.expander("Eliminar pago a cuenta"):
+        df_pagos_del = obtener_pagos_cuenta()
+        if not df_pagos_del.empty:
+            st.dataframe(df_pagos_del, use_container_width=True)
+            pago_id_del = st.number_input("ID del pago a eliminar", min_value=1, step=1, key="del_pago_id")
+            if st.button("Eliminar pago", key="btn_eliminar_pago"):
+                pago_row = df_pagos_del[df_pagos_del['id'] == pago_id_del]
+                if not pago_row.empty:
+                    cliente = pago_row['cliente_nombre'].iloc[0]
+                    monto = pago_row['monto'].iloc[0]
+                    confirmar_eliminacion_pago(pago_id_del, cliente, monto)
+                else:
+                    st.warning("Pago no encontrado")
+        else:
+            st.info("No hay pagos a cuenta para eliminar")
