@@ -398,6 +398,20 @@ with st.sidebar.expander("Acceso", expanded=True):
         st.caption(f"DB: {DB_PATH}")
         if DB_PATH.exists():
             st.success(f"✓ BD activa ({DB_PATH.stat().st_size} bytes)")
+            # Mostrar estadísticas de datos persistentes
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                c.execute("SELECT COUNT(*) FROM clientes")
+                num_clientes = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM movimientos")
+                num_movimientos = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM pagos_cuenta")
+                num_pagos = c.fetchone()[0]
+                conn.close()
+                st.caption(f"📊 {num_clientes} clientes | {num_movimientos} movimientos | {num_pagos} pagos")
+            except:
+                pass
         else:
             st.error("✗ Base de datos no encontrada")
         if st.button("Cerrar sesion"):
