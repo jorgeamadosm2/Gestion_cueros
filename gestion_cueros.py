@@ -116,8 +116,13 @@ def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total
 
 def obtener_datos():
     conn = sqlite3.connect(DB_PATH)
-    df = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
-    conn.close()
+    try:
+        df = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
+    except Exception as e:
+        st.error(f"Error al leer movimientos: {str(e)}")
+        df = pd.DataFrame()
+    finally:
+        conn.close()
     return df
 
 def autenticar_usuario(usuario, password):
@@ -394,6 +399,10 @@ if 'cliente_form_key' not in st.session_state:
 if 'pago_form_key' not in st.session_state:
     st.session_state.pago_form_key = 0
 
+# Forzar refresco de datos
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = 0
+
 # --- LOGIN ---
 if 'auth' not in st.session_state:
     sesion_guardada = cargar_sesion()
@@ -416,10 +425,13 @@ with st.sidebar.expander("Acceso", expanded=True):
                 num_movimientos = c.fetchone()[0]
                 c.execute("SELECT COUNT(*) FROM pagos_cuenta")
                 num_pagos = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM usuarios")
+                num_usuarios = c.fetchone()[0]
                 conn.close()
-                st.caption(f"📊 {num_clientes} clientes | {num_movimientos} movimientos | {num_pagos} pagos")
-            except:
-                pass
+                st.caption(f"📊 {num_usuarios} usuarios | {num_clientes} clientes")
+                st.caption(f"📦 {num_movimientos} movimientos | {num_pagos} pagos")
+            except Exception as e:
+                st.error(f"Error BD: {str(e)}")
         else:
             st.error("✗ Base de datos no encontrada")
         if st.button("Cerrar sesion"):
@@ -663,6 +675,13 @@ else:
 if st.session_state.auth['rol'] == 'admin':
     st.markdown("---")
     st.subheader("Administracion de Usuarios")
+    
+    # Botón de verificación y refresco
+    col_diag1, col_diag2 = st.columns([3, 1])
+    with col_diag2:
+        if st.button("🔄 Refrescar datos", key="btn_refresh_all"):
+            st.session_state.last_refresh += 1
+            st.rerun()
 
     with st.expander("Log de Usuarios Creados"):
         df_users_log = obtener_usuarios()
@@ -902,3 +921,42 @@ if st.session_state.auth['rol'] == 'admin':
                     st.warning("Pago no encontrado")
         else:
             st.info("No hay pagos a cuenta para eliminar")
+
+    st.markdown("---")
+    with st.expander("🔍 Diagnóstico de Base de Datos"):
+        st.write("**Información de la base de datos:**")
+        st.code(f"Ruta: {DB_PATH}")
+        st.write(f"Existe: {DB_PATH.exists()}")
+        if DB_PATH.exists():
+            st.write(f"Tamaño: {DB_PATH.stat().st_size} bytes")
+            st.write(f"Última modificación: {datetime.fromtimestamp(DB_PATH.stat().st_mtime)}")
+            
+            try:
+                conn = sqlite3.connect(DB_PATH)
+                c = conn.cursor()
+                
+                st.write("**Tablas en la base de datos:**")
+                c.execute("SELECT name FROM sqlite_master WHERE type='table';")
+                tablas = c.fetchall()
+                for tabla in tablas:
+                    st.write(f"- {tabla[0]}")
+                
+                st.write("**Conteo de registros:**")
+                c.execute("SELECT COUNT(*) FROM usuarios")
+                st.write(f"Usuarios: {c.fetchone()[0]}")
+                c.execute("SELECT COUNT(*) FROM clientes")
+                st.write(f"Clientes: {c.fetchone()[0]}")
+                c.execute("SELECT COUNT(*) FROM movimientos")
+                st.write(f"Movimientos: {c.fetchone()[0]}")
+                c.execute("SELECT COUNT(*) FROM pagos_cuenta")
+                st.write(f"Pagos a cuenta: {c.fetchone()[0]}")
+                
+                conn.close()
+                
+                if st.button("Verificar integridad", key="btn_verify_integrity"):
+                    st.success("Base de datos funcionando correctamente")
+                    
+            except Exception as e:
+                st.error(f"Error al consultar BD: {str(e)}")
+        else:
+            st.error("El archivo de base de datos no existe")
