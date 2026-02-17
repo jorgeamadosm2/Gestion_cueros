@@ -321,6 +321,10 @@ with st.sidebar.expander("Acceso", expanded=True):
         st.write(f"Usuario: {st.session_state.auth['usuario']}")
         st.write(f"Rol: {st.session_state.auth['rol']}")
         st.caption(f"DB: {DB_PATH}")
+        if DB_PATH.exists():
+            st.success(f"✓ BD activa ({DB_PATH.stat().st_size} bytes)")
+        else:
+            st.error("✗ Base de datos no encontrada")
         if st.button("Cerrar sesion"):
             st.session_state.auth = None
             eliminar_sesion()
@@ -347,7 +351,25 @@ st.sidebar.header("Nuevo Registro")
 if st.session_state.auth['rol'] == 'admin':
     tipo_operacion = st.sidebar.selectbox("Tipo de Operación", ["Ingreso (Compra)", "Egreso (Venta)"])
     producto = st.sidebar.selectbox("Producto", ["Sal", "Cueros"])
-    desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+    
+    # Selector de cliente/proveedor
+    df_clientes_sidebar = obtener_clientes()
+    if not df_clientes_sidebar.empty:
+        clientes_activos = df_clientes_sidebar[df_clientes_sidebar['activo'] == 1]
+        if not clientes_activos.empty:
+            opciones_clientes_sidebar = ["-- Escribir manualmente --"] + clientes_activos['nombre'].tolist()
+            cliente_seleccionado = st.sidebar.selectbox("Cliente / Proveedor", opciones_clientes_sidebar)
+            if cliente_seleccionado == "-- Escribir manualmente --":
+                desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+            else:
+                desc_input = cliente_seleccionado
+                st.sidebar.info(f"Seleccionado: {desc_input}")
+        else:
+            desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+            st.sidebar.caption("No hay clientes activos. Créalos en Administración de Clientes")
+    else:
+        desc_input = st.sidebar.text_input("Descripción / Cliente / Proveedor")
+        st.sidebar.caption("No hay clientes registrados. Créalos en Administración de Clientes")
     col1, col2 = st.sidebar.columns(2)
     cant_input = col1.number_input("Cantidad (Unidades)", min_value=1, step=1)
     peso_input = col2.number_input("Peso Total (kg)", min_value=0.0, step=0.1)
@@ -619,7 +641,11 @@ if st.session_state.auth['rol'] == 'admin':
     st.markdown("---")
     st.subheader("Administracion de Clientes")
 
-    with st.expander("Crear nuevo cliente"):
+    with st.expander("Log de Clientes Creados"):
+        df_clientes_log = obtener_clientes()
+        st.dataframe(df_clientes_log, use_container_width=True)
+
+    with st.expander("Crear cliente"):
         nombre_cliente = st.text_input("Nombre del cliente / proveedor", key="new_cliente_nombre")
         tipo_cliente = st.selectbox("Tipo", ["Cliente", "Proveedor"], key="new_cliente_tipo")
         contacto_cliente = st.text_input("Persona de contacto", key="new_cliente_contacto")
@@ -628,69 +654,58 @@ if st.session_state.auth['rol'] == 'admin':
         email_cliente = col_email.text_input("Email", key="new_cliente_email")
         direccion_cliente = st.text_input("Dirección", key="new_cliente_direccion")
         notas_cliente = st.text_area("Notas adicionales", key="new_cliente_notas")
-        if st.button("Crear Cliente", key="btn_crear_cliente"):
+        if st.button("Crear"):
             if nombre_cliente:
                 try:
                     crear_cliente(nombre_cliente, tipo_cliente, contacto_cliente, telefono_cliente, email_cliente, direccion_cliente, notas_cliente)
-                    st.success(f"Cliente '{nombre_cliente}' creado exitosamente")
+                    st.success("Cliente creado")
                     st.rerun()
                 except sqlite3.IntegrityError:
                     st.error("Ya existe un cliente con ese nombre")
             else:
-                st.error("El nombre del cliente es obligatorio")
+                st.error("Completa el nombre del cliente")
 
-    with st.expander("Lista de clientes"):
+    with st.expander("Gestionar clientes"):
         df_clientes = obtener_clientes()
-        if not df_clientes.empty:
-            st.dataframe(df_clientes, use_container_width=True)
+        st.dataframe(df_clientes, use_container_width=True)
+        cliente_id = st.number_input("ID de cliente", min_value=1, step=1, key="manage_cliente_id")
+        cliente_data = obtener_cliente_por_id(cliente_id)
+        if cliente_data:
+            nombre_edit = st.text_input("Nombre", value=cliente_data['nombre'], key="edit_cliente_nombre")
+            tipo_edit = st.selectbox("Tipo", ["Cliente", "Proveedor"], index=0 if cliente_data['tipo']=="Cliente" else 1, key="edit_cliente_tipo")
+            contacto_edit = st.text_input("Persona de contacto", value=cliente_data['contacto'] or "", key="edit_cliente_contacto")
+            col_tel_edit, col_email_edit = st.columns(2)
+            telefono_edit = col_tel_edit.text_input("Teléfono", value=cliente_data['telefono'] or "", key="edit_cliente_telefono")
+            email_edit = col_email_edit.text_input("Email", value=cliente_data['email'] or "", key="edit_cliente_email")
+            direccion_edit = st.text_input("Dirección", value=cliente_data['direccion'] or "", key="edit_cliente_direccion")
+            notas_edit = st.text_area("Notas", value=cliente_data['notas'] or "", key="edit_cliente_notas")
+            activo_edit = st.checkbox("Activo", value=bool(cliente_data['activo']), key="edit_cliente_activo")
         else:
-            st.info("No hay clientes registrados")
+            nombre_edit = st.text_input("Nombre", key="edit_cliente_nombre")
+            tipo_edit = st.selectbox("Tipo", ["Cliente", "Proveedor"], key="edit_cliente_tipo")
+            contacto_edit = st.text_input("Persona de contacto", key="edit_cliente_contacto")
+            col_tel_edit, col_email_edit = st.columns(2)
+            telefono_edit = col_tel_edit.text_input("Teléfono", key="edit_cliente_telefono")
+            email_edit = col_email_edit.text_input("Email", key="edit_cliente_email")
+            direccion_edit = st.text_input("Dirección", key="edit_cliente_direccion")
+            notas_edit = st.text_area("Notas", key="edit_cliente_notas")
+            activo_edit = st.checkbox("Activo", value=True, key="edit_cliente_activo")
+        
+        if st.button("Actualizar cliente"):
+            if nombre_edit:
+                try:
+                    actualizar_cliente(cliente_id, nombre_edit, tipo_edit, contacto_edit, telefono_edit, email_edit, direccion_edit, notas_edit, activo_edit)
+                    st.success("Cliente actualizado")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Ya existe otro cliente con ese nombre")
+            else:
+                st.error("Completa el nombre del cliente")
 
-    with st.expander("Editar cliente"):
-        df_clientes_edit = obtener_clientes()
-        if not df_clientes_edit.empty:
-            cliente_id_edit = st.selectbox(
-                "Seleccionar cliente",
-                options=df_clientes_edit['id'].tolist(),
-                format_func=lambda x: f"{x} - {df_clientes_edit[df_clientes_edit['id']==x]['nombre'].iloc[0]}",
-                key="edit_cliente_id"
-            )
-            cliente_data = obtener_cliente_por_id(cliente_id_edit)
-            if cliente_data:
-                nombre_edit = st.text_input("Nombre", value=cliente_data['nombre'], key="edit_cliente_nombre")
-                tipo_edit = st.selectbox("Tipo", ["Cliente", "Proveedor"], index=0 if cliente_data['tipo']=="Cliente" else 1, key="edit_cliente_tipo")
-                contacto_edit = st.text_input("Persona de contacto", value=cliente_data['contacto'] or "", key="edit_cliente_contacto")
-                col_tel_edit, col_email_edit = st.columns(2)
-                telefono_edit = col_tel_edit.text_input("Teléfono", value=cliente_data['telefono'] or "", key="edit_cliente_telefono")
-                email_edit = col_email_edit.text_input("Email", value=cliente_data['email'] or "", key="edit_cliente_email")
-                direccion_edit = st.text_input("Dirección", value=cliente_data['direccion'] or "", key="edit_cliente_direccion")
-                notas_edit = st.text_area("Notas", value=cliente_data['notas'] or "", key="edit_cliente_notas")
-                activo_edit = st.checkbox("Activo", value=bool(cliente_data['activo']), key="edit_cliente_activo")
-                if st.button("Actualizar Cliente", key="btn_actualizar_cliente"):
-                    if nombre_edit:
-                        try:
-                            actualizar_cliente(cliente_id_edit, nombre_edit, tipo_edit, contacto_edit, telefono_edit, email_edit, direccion_edit, notas_edit, activo_edit)
-                            st.success("Cliente actualizado exitosamente")
-                            st.rerun()
-                        except sqlite3.IntegrityError:
-                            st.error("Ya existe otro cliente con ese nombre")
-                    else:
-                        st.error("El nombre del cliente es obligatorio")
-        else:
-            st.info("No hay clientes para editar")
-
-    with st.expander("Eliminar cliente"):
-        df_clientes_del = obtener_clientes()
-        if not df_clientes_del.empty:
-            cliente_id_del = st.selectbox(
-                "Seleccionar cliente a eliminar",
-                options=df_clientes_del['id'].tolist(),
-                format_func=lambda x: f"{x} - {df_clientes_del[df_clientes_del['id']==x]['nombre'].iloc[0]}",
-                key="del_cliente_id"
-            )
-            if st.button("Eliminar Cliente", key="btn_eliminar_cliente"):
-                cliente_del = obtener_cliente_por_id(cliente_id_del)
-                if cliente_del:
-                    confirmar_eliminacion_cliente(cliente_id_del, cliente_del['nombre'])
-        else:
-            st.info("No hay clientes para eliminar")
+        st.markdown("---")
+        if st.button("Eliminar cliente"):
+            cliente_del = obtener_cliente_por_id(cliente_id)
+            if cliente_del:
+                confirmar_eliminacion_cliente(cliente_id, cliente_del['nombre'])
+            else:
+                st.warning("Cliente no encontrado")
