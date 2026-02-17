@@ -4,12 +4,14 @@ import sqlite3
 from datetime import datetime
 import hashlib
 from pathlib import Path
+import json
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
 st.title("🐄 Gestión de Stock y Pagos - Cueros")
 
 DB_PATH = Path(__file__).resolve().parent / "cueros.db"
+SESSION_FILE = Path(__file__).resolve().parent / ".session.json"
 
 # --- FUNCIONES DE BASE DE DATOS ---
 def init_db():
@@ -71,6 +73,21 @@ def init_db():
         password_hash = hashlib.sha256('admin'.encode('utf-8')).hexdigest()
         c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
                   ('admin', password_hash, 'admin', 1))
+    # Tabla de clientes
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS clientes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT UNIQUE,
+            tipo TEXT, -- 'Cliente' o 'Proveedor'
+            contacto TEXT,
+            telefono TEXT,
+            email TEXT,
+            direccion TEXT,
+            notas TEXT,
+            activo INTEGER, -- 1 activo, 0 inactivo
+            fecha_creacion TEXT
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -174,6 +191,85 @@ def eliminar_movimientos_cliente(cliente):
     conn.commit()
     conn.close()
 
+def crear_cliente(nombre, tipo, contacto, telefono, email, direccion, notas):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    c.execute('''
+        INSERT INTO clientes (nombre, tipo, contacto, telefono, email, direccion, notas, activo, fecha_creacion)
+        VALUES (?,?,?,?,?,?,?,?,?)
+    ''', (nombre, tipo, contacto, telefono, email, direccion, notas, 1, fecha))
+    conn.commit()
+    conn.close()
+
+def obtener_clientes():
+    conn = sqlite3.connect(DB_PATH)
+    df_clientes = pd.read_sql_query("SELECT * FROM clientes ORDER BY nombre ASC", conn)
+    conn.close()
+    return df_clientes
+
+def actualizar_cliente(cliente_id, nombre, tipo, contacto, telefono, email, direccion, notas, activo):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('''
+        UPDATE clientes
+        SET nombre = ?, tipo = ?, contacto = ?, telefono = ?, email = ?, direccion = ?, notas = ?, activo = ?
+        WHERE id = ?
+    ''', (nombre, tipo, contacto, telefono, email, direccion, notas, 1 if activo else 0, cliente_id))
+    conn.commit()
+    conn.close()
+
+def eliminar_cliente(cliente_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('DELETE FROM clientes WHERE id = ?', (cliente_id,))
+    conn.commit()
+    conn.close()
+
+def obtener_cliente_por_id(cliente_id):
+    conn = sqlite3.connect(DB_PATH)
+    c = conn.cursor()
+    c.execute('SELECT * FROM clientes WHERE id = ?', (cliente_id,))
+    row = c.fetchone()
+    conn.close()
+    if row:
+        return {
+            'id': row[0],
+            'nombre': row[1],
+            'tipo': row[2],
+            'contacto': row[3],
+            'telefono': row[4],
+            'email': row[5],
+            'direccion': row[6],
+            'notas': row[7],
+            'activo': row[8],
+            'fecha_creacion': row[9]
+        }
+    return None
+
+def guardar_sesion(usuario, rol):
+    try:
+        with open(SESSION_FILE, 'w') as f:
+            json.dump({'usuario': usuario, 'rol': rol}, f)
+    except:
+        pass
+
+def cargar_sesion():
+    try:
+        if SESSION_FILE.exists():
+            with open(SESSION_FILE, 'r') as f:
+                return json.load(f)
+    except:
+        pass
+    return None
+
+def eliminar_sesion():
+    try:
+        if SESSION_FILE.exists():
+            SESSION_FILE.unlink()
+    except:
+        pass
+
 @st.dialog("Confirmar eliminacion")
 def confirmar_eliminacion(mov_id, descripcion, total):
     st.write(f"ID: {mov_id}")
@@ -199,12 +295,26 @@ def confirmar_eliminacion_usuario(user_id, usuario):
     if col_c2.button("Cancelar"):
         st.rerun()
 
+@st.dialog("Confirmar eliminacion de cliente")
+def confirmar_eliminacion_cliente(cliente_id, nombre):
+    st.write(f"ID: {cliente_id}")
+    st.write(f"Cliente: {nombre}")
+    st.warning("Esto no eliminará los movimientos asociados a este cliente")
+    col_c1, col_c2 = st.columns(2)
+    if col_c1.button("Eliminar"):
+        eliminar_cliente(cliente_id)
+        st.session_state.last_cliente_deleted = cliente_id
+        st.rerun()
+    if col_c2.button("Cancelar"):
+        st.rerun()
+
 # Inicializar DB al arrancar
 init_db()
 
 # --- LOGIN ---
 if 'auth' not in st.session_state:
-    st.session_state.auth = None
+    sesion_guardada = cargar_sesion()
+    st.session_state.auth = sesion_guardada
 
 with st.sidebar.expander("Acceso", expanded=True):
     if st.session_state.auth:
@@ -213,6 +323,7 @@ with st.sidebar.expander("Acceso", expanded=True):
         st.caption(f"DB: {DB_PATH}")
         if st.button("Cerrar sesion"):
             st.session_state.auth = None
+            eliminar_sesion()
             st.rerun()
     else:
         user_input = st.text_input("Usuario", key="login_user")
@@ -221,6 +332,7 @@ with st.sidebar.expander("Acceso", expanded=True):
             auth = autenticar_usuario(user_input, pass_input)
             if auth:
                 st.session_state.auth = auth
+                guardar_sesion(auth['usuario'], auth['rol'])
                 st.success("Ingreso correcto")
                 st.rerun()
             else:
@@ -292,6 +404,9 @@ if not df.empty:
     if 'last_user_deleted' in st.session_state and st.session_state.last_user_deleted is not None:
         st.success(f"Usuario eliminado (ID {st.session_state.last_user_deleted})")
         st.session_state.last_user_deleted = None
+    if 'last_cliente_deleted' in st.session_state and st.session_state.last_cliente_deleted is not None:
+        st.success(f"Cliente eliminado (ID {st.session_state.last_cliente_deleted})")
+        st.session_state.last_cliente_deleted = None
     # Filtros
     st.subheader("Filtros")
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 3, 1])
@@ -500,3 +615,82 @@ if st.session_state.auth['rol'] == 'admin':
                 st.rerun()
             else:
                 st.error("Falta la descripcion")
+
+    st.markdown("---")
+    st.subheader("Administracion de Clientes")
+
+    with st.expander("Crear nuevo cliente"):
+        nombre_cliente = st.text_input("Nombre del cliente / proveedor", key="new_cliente_nombre")
+        tipo_cliente = st.selectbox("Tipo", ["Cliente", "Proveedor"], key="new_cliente_tipo")
+        contacto_cliente = st.text_input("Persona de contacto", key="new_cliente_contacto")
+        col_tel, col_email = st.columns(2)
+        telefono_cliente = col_tel.text_input("Teléfono", key="new_cliente_telefono")
+        email_cliente = col_email.text_input("Email", key="new_cliente_email")
+        direccion_cliente = st.text_input("Dirección", key="new_cliente_direccion")
+        notas_cliente = st.text_area("Notas adicionales", key="new_cliente_notas")
+        if st.button("Crear Cliente", key="btn_crear_cliente"):
+            if nombre_cliente:
+                try:
+                    crear_cliente(nombre_cliente, tipo_cliente, contacto_cliente, telefono_cliente, email_cliente, direccion_cliente, notas_cliente)
+                    st.success(f"Cliente '{nombre_cliente}' creado exitosamente")
+                    st.rerun()
+                except sqlite3.IntegrityError:
+                    st.error("Ya existe un cliente con ese nombre")
+            else:
+                st.error("El nombre del cliente es obligatorio")
+
+    with st.expander("Lista de clientes"):
+        df_clientes = obtener_clientes()
+        if not df_clientes.empty:
+            st.dataframe(df_clientes, use_container_width=True)
+        else:
+            st.info("No hay clientes registrados")
+
+    with st.expander("Editar cliente"):
+        df_clientes_edit = obtener_clientes()
+        if not df_clientes_edit.empty:
+            cliente_id_edit = st.selectbox(
+                "Seleccionar cliente",
+                options=df_clientes_edit['id'].tolist(),
+                format_func=lambda x: f"{x} - {df_clientes_edit[df_clientes_edit['id']==x]['nombre'].iloc[0]}",
+                key="edit_cliente_id"
+            )
+            cliente_data = obtener_cliente_por_id(cliente_id_edit)
+            if cliente_data:
+                nombre_edit = st.text_input("Nombre", value=cliente_data['nombre'], key="edit_cliente_nombre")
+                tipo_edit = st.selectbox("Tipo", ["Cliente", "Proveedor"], index=0 if cliente_data['tipo']=="Cliente" else 1, key="edit_cliente_tipo")
+                contacto_edit = st.text_input("Persona de contacto", value=cliente_data['contacto'] or "", key="edit_cliente_contacto")
+                col_tel_edit, col_email_edit = st.columns(2)
+                telefono_edit = col_tel_edit.text_input("Teléfono", value=cliente_data['telefono'] or "", key="edit_cliente_telefono")
+                email_edit = col_email_edit.text_input("Email", value=cliente_data['email'] or "", key="edit_cliente_email")
+                direccion_edit = st.text_input("Dirección", value=cliente_data['direccion'] or "", key="edit_cliente_direccion")
+                notas_edit = st.text_area("Notas", value=cliente_data['notas'] or "", key="edit_cliente_notas")
+                activo_edit = st.checkbox("Activo", value=bool(cliente_data['activo']), key="edit_cliente_activo")
+                if st.button("Actualizar Cliente", key="btn_actualizar_cliente"):
+                    if nombre_edit:
+                        try:
+                            actualizar_cliente(cliente_id_edit, nombre_edit, tipo_edit, contacto_edit, telefono_edit, email_edit, direccion_edit, notas_edit, activo_edit)
+                            st.success("Cliente actualizado exitosamente")
+                            st.rerun()
+                        except sqlite3.IntegrityError:
+                            st.error("Ya existe otro cliente con ese nombre")
+                    else:
+                        st.error("El nombre del cliente es obligatorio")
+        else:
+            st.info("No hay clientes para editar")
+
+    with st.expander("Eliminar cliente"):
+        df_clientes_del = obtener_clientes()
+        if not df_clientes_del.empty:
+            cliente_id_del = st.selectbox(
+                "Seleccionar cliente a eliminar",
+                options=df_clientes_del['id'].tolist(),
+                format_func=lambda x: f"{x} - {df_clientes_del[df_clientes_del['id']==x]['nombre'].iloc[0]}",
+                key="del_cliente_id"
+            )
+            if st.button("Eliminar Cliente", key="btn_eliminar_cliente"):
+                cliente_del = obtener_cliente_por_id(cliente_id_del)
+                if cliente_del:
+                    confirmar_eliminacion_cliente(cliente_id_del, cliente_del['nombre'])
+        else:
+            st.info("No hay clientes para eliminar")
