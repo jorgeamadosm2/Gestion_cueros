@@ -628,45 +628,210 @@ if not df.empty:
 
     # --- RESUMEN POR CLIENTE ---
     st.markdown("---")
-    st.subheader("Resumen por Cliente")
-    clientes_resumen = sorted(df['descripcion'].dropna().unique().tolist())
-    opciones_resumen = ["Todos"] + clientes_resumen
-    cliente_resumen = st.selectbox("Selecciona un cliente", opciones_resumen, key="cliente_resumen")
-    df_cliente = df
-    if cliente_resumen != "Todos":
-        df_cliente = df_cliente[df_cliente['descripcion'] == cliente_resumen]
-        
-        # Mostrar saldo a cuenta del cliente
-        saldo_cliente = calcular_saldo_cliente(cliente_resumen)
-        if saldo_cliente > 0:
-            st.success(f"💰 Saldo a favor del cliente: ${saldo_cliente:,.2f}")
-        elif saldo_cliente < 0:
-            st.warning(f"💸 Cliente debe: ${abs(saldo_cliente):,.2f}")
-        else:
-            st.info("💵 Sin saldo a cuenta")
-
-    if st.session_state.auth['rol'] == 'admin' and cliente_resumen != "Todos":
-        if st.button("Eliminar todos los movimientos de este cliente", key="btn_eliminar_movs_cliente"):
-            eliminar_movimientos_cliente(cliente_resumen)
-            st.success("Movimientos eliminados")
-            st.rerun()
-
-    ingresos_cliente = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']
-    egresos_cliente = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']
-
-    st.write("Ingresos (Compras)")
-    st.dataframe(ingresos_cliente, use_container_width=True)
-    st.write("Egresos (Ventas)")
-    st.dataframe(egresos_cliente, use_container_width=True)
+    st.subheader("Estado de Cuenta por Cliente")
     
-    # Mostrar pagos a cuenta del cliente
+    # Obtener lista de clientes únicos desde movimientos y pagos
+    clientes_movimientos = sorted(df['descripcion'].dropna().unique().tolist())
+    df_pagos_todos = obtener_pagos_cuenta()
+    clientes_pagos = df_pagos_todos['cliente_nombre'].unique().tolist() if not df_pagos_todos.empty else []
+    clientes_unicos = sorted(list(set(clientes_movimientos + clientes_pagos)))
+    
+    opciones_resumen = ["Todos"] + clientes_unicos
+    cliente_resumen = st.selectbox("Selecciona un cliente", opciones_resumen, key="cliente_resumen")
+    
     if cliente_resumen != "Todos":
-        st.write("Pagos a Cuenta")
+        # Filtrar datos del cliente
+        df_cliente = df[df['descripcion'] == cliente_resumen]
         df_pagos_cliente = obtener_pagos_cuenta_cliente(cliente_resumen)
-        if not df_pagos_cliente.empty:
-            st.dataframe(df_pagos_cliente, use_container_width=True)
+        
+        # Calcular totales
+        compras_cliente = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']  # Lo que yo compré a este proveedor
+        ventas_cliente = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']  # Lo que yo vendí a este cliente
+        
+        total_comprado = compras_cliente['precio_total'].sum()
+        total_vendido = ventas_cliente['precio_total'].sum()
+        
+        # Pagos
+        compras_pagadas = compras_cliente[compras_cliente['estado_pago'] == 'Pagado']['precio_total'].sum()
+        compras_impagas = compras_cliente[compras_cliente['estado_pago'] == 'Impago']['precio_total'].sum()
+        ventas_cobradas = ventas_cliente[ventas_cliente['estado_pago'] == 'Pagado']['precio_total'].sum()
+        ventas_impagag = ventas_cliente[ventas_cliente['estado_pago'] == 'Impago']['precio_total'].sum()
+        
+        # Saldo de pagos a cuenta
+        saldo_cuenta = calcular_saldo_cliente(cliente_resumen)
+        
+        # Balance general
+        # Si es proveedor: le debo lo que compré y no pagué
+        # Si es cliente: me debe lo que vendí y no cobré
+        # El saldo a cuenta se suma/resta
+        balance_compras = compras_impagas  # Lo que le debo
+        balance_ventas = ventas_impagag    # Lo que me debe
+        balance_final = balance_ventas - balance_compras + saldo_cuenta
+        
+        # Mostrar tarjetas de resumen
+        st.markdown("### 📊 Resumen General")
+        col1, col2, col3, col4 = st.columns(4)
+        
+        with col1:
+            st.metric("Total Comprado", f"${total_comprado:,.2f}")
+            st.caption(f"Pagado: ${compras_pagadas:,.2f}")
+            st.caption(f"Impago: ${compras_impagas:,.2f}")
+        
+        with col2:
+            st.metric("Total Vendido", f"${total_vendido:,.2f}")
+            st.caption(f"Cobrado: ${ventas_cobradas:,.2f}")
+            st.caption(f"Impago: ${ventas_impagag:,.2f}")
+        
+        with col3:
+            st.metric("Saldo a Cuenta", f"${saldo_cuenta:,.2f}")
+            if saldo_cuenta > 0:
+                st.caption("🟢 Cliente tiene saldo a favor")
+            elif saldo_cuenta < 0:
+                st.caption("🔴 Saldo usado")
+            else:
+                st.caption("⚪ Sin saldo")
+        
+        with col4:
+            if balance_final > 0:
+                st.metric("Balance Total", f"${balance_final:,.2f}", delta="Me debe")
+            elif balance_final < 0:
+                st.metric("Balance Total", f"${abs(balance_final):,.2f}", delta="Le debo")
+            else:
+                st.metric("Balance Total", "$0.00", delta="Cuenta saldada")
+        
+        st.markdown("---")
+        
+        # Estado de cuenta detallado
+        st.markdown("### 📋 Estado de Cuenta Detallado")
+        
+        # Crear tabla unificada de movimientos
+        movimientos_cuenta = []
+        
+        # Agregar compras
+        for _, row in compras_cliente.iterrows():
+            movimientos_cuenta.append({
+                'Fecha': row['fecha'],
+                'Tipo': 'Compra (Yo compré)',
+                'Detalle': f"{row['producto']} - {row['cantidad']} u. - {row['peso_kg']} kg",
+                'Monto': row['precio_total'],
+                'Estado': row['estado_pago'],
+                'Debe': 0 if row['estado_pago'] == 'Pagado' else row['precio_total'],
+                'Haber': 0
+            })
+        
+        # Agregar ventas
+        for _, row in ventas_cliente.iterrows():
+            movimientos_cuenta.append({
+                'Fecha': row['fecha'],
+                'Tipo': 'Venta (Yo vendí)',
+                'Detalle': f"{row['producto']} - {row['cantidad']} u. - {row['peso_kg']} kg",
+                'Monto': row['precio_total'],
+                'Estado': row['estado_pago'],
+                'Debe': 0,
+                'Haber': 0 if row['estado_pago'] == 'Pagado' else row['precio_total']
+            })
+        
+        # Agregar pagos a cuenta
+        for _, row in df_pagos_cliente.iterrows():
+            movimientos_cuenta.append({
+                'Fecha': row['fecha'],
+                'Tipo': f"Pago a cuenta ({row['tipo']})",
+                'Detalle': row['concepto'],
+                'Monto': row['monto'],
+                'Estado': '-',
+                'Debe': 0 if row['tipo'] == 'ingreso' else row['monto'],
+                'Haber': row['monto'] if row['tipo'] == 'ingreso' else 0
+            })
+        
+        # Crear DataFrame y ordenar por fecha
+        if movimientos_cuenta:
+            df_cuenta = pd.DataFrame(movimientos_cuenta)
+            df_cuenta = df_cuenta.sort_values('Fecha', ascending=False)
+            
+            # Calcular balance acumulado
+            df_cuenta['Balance'] = (df_cuenta['Haber'] - df_cuenta['Debe']).cumsum()[::-1]
+            
+            st.dataframe(df_cuenta, use_container_width=True)
+            
+            # Exportar a CSV
+            csv = df_cuenta.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Descargar estado de cuenta (CSV)",
+                data=csv,
+                file_name=f"estado_cuenta_{cliente_resumen}_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="download_estado_cuenta"
+            )
         else:
-            st.info("No hay pagos a cuenta registrados")
+            st.info("No hay movimientos registrados para este cliente")
+        
+        # Botones de administración
+        if st.session_state.auth['rol'] == 'admin':
+            st.markdown("---")
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                if st.button("🗑️ Eliminar todos los movimientos", key="btn_eliminar_movs_cliente"):
+                    eliminar_movimientos_cliente(cliente_resumen)
+                    st.success("Movimientos eliminados")
+                    st.rerun()
+    
+    else:
+        # Vista general de todos los clientes
+        st.markdown("### 📊 Resumen General de Todos los Clientes")
+        
+        resumen_general = []
+        for cliente in clientes_unicos:
+            df_cliente = df[df['descripcion'] == cliente]
+            compras = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']['precio_total'].sum()
+            ventas = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']['precio_total'].sum()
+            compras_impagag = df_cliente[(df_cliente['tipo'] == 'Ingreso (Compra)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum()
+            ventas_impagag = df_cliente[(df_cliente['tipo'] == 'Egreso (Venta)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum()
+            saldo = calcular_saldo_cliente(cliente)
+            balance = ventas_impagag - compras_impagag + saldo
+            
+            resumen_general.append({
+                'Cliente': cliente,
+                'Total Comprado': compras,
+                'Total Vendido': ventas,
+                'Deuda Compras': compras_impagag,
+                'Deuda Ventas': ventas_impagag,
+                'Saldo a Cuenta': saldo,
+                'Balance Final': balance
+            })
+        
+        if resumen_general:
+            df_resumen = pd.DataFrame(resumen_general)
+            df_resumen = df_resumen.sort_values('Balance Final', ascending=False)
+            
+            # Colorear las filas según el balance
+            def color_balance(val):
+                if val > 0:
+                    return 'background-color: #d4edda'  # Verde claro
+                elif val < 0:
+                    return 'background-color: #f8d7da'  # Rojo claro
+                return ''
+            
+            st.dataframe(df_resumen, use_container_width=True)
+            
+            # Totales generales
+            st.markdown("---")
+            col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+            col_t1.metric("Total en Deudas de Compras", f"${df_resumen['Deuda Compras'].sum():,.2f}")
+            col_t2.metric("Total en Deudas de Ventas", f"${df_resumen['Deuda Ventas'].sum():,.2f}")
+            col_t3.metric("Saldo Total a Cuenta", f"${df_resumen['Saldo a Cuenta'].sum():,.2f}")
+            col_t4.metric("Balance General", f"${df_resumen['Balance Final'].sum():,.2f}")
+            
+            # Exportar resumen general
+            csv_general = df_resumen.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Descargar resumen general (CSV)",
+                data=csv_general,
+                file_name=f"resumen_clientes_{datetime.now().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                key="download_resumen_general"
+            )
+        else:
+            st.info("No hay clientes con movimientos registrados")
 
 else:
     st.info("Aún no hay movimientos registrados. Usa el menú de la izquierda.")
