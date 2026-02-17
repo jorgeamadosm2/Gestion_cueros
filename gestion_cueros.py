@@ -1,318 +1,321 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
 from datetime import datetime
 import hashlib
 from pathlib import Path
 import json
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
 st.title("🐄 Gestión de Stock y Pagos - Cueros")
 
-DB_PATH = Path(__file__).resolve().parent / "cueros.db"
 SESSION_FILE = Path(__file__).resolve().parent / ".session.json"
+FIREBASE_CREDS = Path(__file__).resolve().parent / "firebase_config.json"
 
-# --- FUNCIONES DE BASE DE DATOS ---
+# --- INICIALIZACIÓN DE FIREBASE ---
+if not firebase_admin._apps:
+    try:
+        if FIREBASE_CREDS.exists():
+            cred = credentials.Certificate(str(FIREBASE_CREDS))
+            firebase_admin.initialize_app(cred)
+            db = firestore.client()
+        else:
+            st.error("❌ Error: Archivo 'firebase_config.json' no encontrado")
+            st.info("📄 Crea el archivo firebase_config.json con tus credenciales de Firebase")
+            st.code("Ver firebase_config_example.json para el formato correcto")
+            st.stop()
+    except Exception as e:
+        st.error(f"❌ Error al conectar con Firebase: {str(e)}")
+        st.stop()
+else:
+    db = firestore.client()
+
+# --- FUNCIONES DE BASE DE DATOS FIREBASE ---
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    # Tabla única para registrar todo (ingresos y egresos)
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS movimientos (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT,
-            tipo TEXT, -- 'Ingreso' (Compra) o 'Egreso' (Venta)
-            producto TEXT, -- 'Sal' o 'Cueros'
-            descripcion TEXT, -- Tipo de cuero o Cliente
-            cantidad INTEGER,
-            peso_kg REAL,
-            precio_total REAL,
-            neto REAL,
-            iva_rate REAL,
-            modo_pago TEXT,
-            detalle_pago TEXT,
-            dinero_a_cuenta REAL,
-            estado_pago TEXT -- 'Pagado' o 'Impago'
-        )
-    ''')
-    # Migracion simple para columnas nuevas
-    c.execute("PRAGMA table_info(movimientos)")
-    columnas = {row[1] for row in c.fetchall()}
-    if 'neto' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN neto REAL')
-    if 'iva_rate' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN iva_rate REAL')
-    if 'modo_pago' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN modo_pago TEXT')
-    if 'detalle_pago' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN detalle_pago TEXT')
-    if 'producto' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN producto TEXT')
-    if 'dinero_a_cuenta' not in columnas:
-        c.execute('ALTER TABLE movimientos ADD COLUMN dinero_a_cuenta REAL')
-    # Tabla de usuarios
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS usuarios (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            usuario TEXT UNIQUE,
-            password_hash TEXT,
-            rol TEXT, -- 'admin' o 'user'
-            activo INTEGER, -- 1 activo, 0 inactivo
-            fecha_creacion TEXT
-        )
-    ''')
-    # Migrar fecha_creacion
-    c.execute("PRAGMA table_info(usuarios)")
-    columnas_usuarios = {row[1] for row in c.fetchall()}
-    if 'fecha_creacion' not in columnas_usuarios:
-        c.execute('ALTER TABLE usuarios ADD COLUMN fecha_creacion TEXT')
-    # Crear admin por defecto si no existe
-    c.execute('SELECT COUNT(*) FROM usuarios')
-    if c.fetchone()[0] == 0:
-        password_hash = hashlib.sha256('admin'.encode('utf-8')).hexdigest()
-        c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo) VALUES (?,?,?,?)',
-                  ('admin', password_hash, 'admin', 1))
-    # Tabla de clientes
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS clientes (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nombre TEXT UNIQUE,
-            tipo TEXT, -- 'Cliente' o 'Proveedor'
-            contacto TEXT,
-            telefono TEXT,
-            email TEXT,
-            direccion TEXT,
-            notas TEXT,
-            activo INTEGER, -- 1 activo, 0 inactivo
-            fecha_creacion TEXT
-        )
-    ''')
-    # Tabla de pagos a cuenta
-    c.execute('''
-        CREATE TABLE IF NOT EXISTS pagos_cuenta (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            fecha TEXT,
-            cliente_nombre TEXT,
-            monto REAL,
-            concepto TEXT,
-            tipo TEXT -- 'ingreso' (cliente deja plata) o 'egreso' (se usa saldo)
-        )
-    ''')
-    conn.commit()
-    conn.close()
+    """Inicializar colecciones de Firebase (ya se crean automáticamente)"""
+    try:
+        # Verificar que exista un usuario admin
+        usuarios_ref = db.collection('usuarios')
+        admin_query = usuarios_ref.where('usuario', '==', 'admin').limit(1).get()
+        
+        if not admin_query:
+            # Crear admin por defecto
+            password_hash = hashlib.sha256('admin'.encode('utf-8')).hexdigest()
+            usuarios_ref.add({
+                'usuario': 'admin',
+                'password_hash': password_hash,
+                'rol': 'admin',
+                'activo': 1,
+                'fecha_creacion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            })
+        return True
+    except Exception as e:
+        st.error(f"Error al inicializar Firebase: {str(e)}")
+        return False
 
 def agregar_movimiento(tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('''
-        INSERT INTO movimientos
-        (fecha, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ''', (fecha, tipo, producto, descripcion, cantidad, peso, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('movimientos').add({
+            'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'tipo': tipo,
+            'producto': producto,
+            'descripcion': descripcion,
+            'cantidad': cantidad,
+            'peso_kg': peso,
+            'precio_total': precio_total,
+            'neto': neto,
+            'iva_rate': iva_rate,
+            'modo_pago': modo_pago,
+            'detalle_pago': detalle_pago,
+            'dinero_a_cuenta': dinero_a_cuenta,
+            'estado_pago': estado
+        })
+    except Exception as e:
+        st.error(f"Error al agregar movimiento: {str(e)}")
 
 def obtener_datos():
-    conn = sqlite3.connect(DB_PATH)
     try:
-        df = pd.read_sql_query("SELECT * FROM movimientos ORDER BY id DESC", conn)
+        movimientos = db.collection('movimientos').order_by('fecha', direction=firestore.Query.DESCENDING).stream()
+        data = []
+        for mov in movimientos:
+            mov_dict = mov.to_dict()
+            mov_dict['id'] = mov.id
+            data.append(mov_dict)
+        return pd.DataFrame(data) if data else pd.DataFrame()
     except Exception as e:
         st.error(f"Error al leer movimientos: {str(e)}")
-        df = pd.DataFrame()
-    finally:
-        conn.close()
-    return df
+        return pd.DataFrame()
 
 def autenticar_usuario(usuario, password):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-    c.execute('SELECT usuario, rol, activo FROM usuarios WHERE usuario = ? AND password_hash = ?',
-              (usuario, password_hash))
-    row = c.fetchone()
-    conn.close()
-    if row and row[2] == 1:
-        return {'usuario': row[0], 'rol': row[1]}
-    return None
+    try:
+        password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        usuarios_ref = db.collection('usuarios')
+        query = usuarios_ref.where('usuario', '==', usuario).where('password_hash', '==', password_hash).limit(1).get()
+        
+        for doc in query:
+            user_data = doc.to_dict()
+            if user_data.get('activo') == 1:
+                return {'usuario': user_data['usuario'], 'rol': user_data['rol']}
+        return None
+    except Exception as e:
+        st.error(f"Error de autenticación: {str(e)}")
+        return None
 
 def crear_usuario(usuario, password, rol):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('INSERT INTO usuarios (usuario, password_hash, rol, activo, fecha_creacion) VALUES (?,?,?,?,?)',
-              (usuario, password_hash, rol, 1, fecha))
-    conn.commit()
-    conn.close()
+    try:
+        password_hash = hashlib.sha256(password.encode('utf-8')).hexdigest()
+        db.collection('usuarios').add({
+            'usuario': usuario,
+            'password_hash': password_hash,
+            'rol': rol,
+            'activo': 1,
+            'fecha_creacion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        st.error(f"Error al crear usuario: {str(e)}")
+        raise
 
 def obtener_usuarios():
-    conn = sqlite3.connect(DB_PATH)
-    df_users = pd.read_sql_query("SELECT id, usuario, rol, activo, fecha_creacion FROM usuarios ORDER BY id ASC", conn)
-    conn.close()
-    return df_users
+    try:
+        usuarios = db.collection('usuarios').stream()
+        data = []
+        for user in usuarios:
+            user_dict = user.to_dict()
+            user_dict['id'] = user.id
+            data.append(user_dict)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al obtener usuarios: {str(e)}")
+        return pd.DataFrame()
 
 def actualizar_estado_usuario(user_id, activo):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('UPDATE usuarios SET activo = ? WHERE id = ?', (1 if activo else 0, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('usuarios').document(user_id).update({
+            'activo': 1 if activo else 0
+        })
+    except Exception as e:
+        st.error(f"Error al actualizar estado: {str(e)}")
 
 def actualizar_password(user_id, new_password):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    password_hash = hashlib.sha256(new_password.encode('utf-8')).hexdigest()
-    c.execute('UPDATE usuarios SET password_hash = ? WHERE id = ?', (password_hash, user_id))
-    conn.commit()
-    conn.close()
+    try:
+        password_hash = hashlib.sha256(new_password.encode('utf-8')).hexdigest()
+        db.collection('usuarios').document(user_id).update({
+            'password_hash': password_hash
+        })
+    except Exception as e:
+        st.error(f"Error al actualizar contraseña: {str(e)}")
 
 def actualizar_rol_usuario(user_id, rol):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('UPDATE usuarios SET rol = ? WHERE id = ? AND usuario != ?', (rol, user_id, 'admin'))
-    conn.commit()
-    conn.close()
+    try:
+        doc = db.collection('usuarios').document(user_id).get()
+        if doc.exists and doc.to_dict().get('usuario') != 'admin':
+            db.collection('usuarios').document(user_id).update({'rol': rol})
+    except Exception as e:
+        st.error(f"Error al actualizar rol: {str(e)}")
 
 def eliminar_usuario(user_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('DELETE FROM usuarios WHERE id = ? AND usuario != ?', (user_id, 'admin'))
-    conn.commit()
-    conn.close()
+    try:
+        doc = db.collection('usuarios').document(user_id).get()
+        if doc.exists and doc.to_dict().get('usuario') != 'admin':
+            db.collection('usuarios').document(user_id).delete()
+    except Exception as e:
+        st.error(f"Error al eliminar usuario: {str(e)}")
 
 def actualizar_movimiento(mov_id, tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        UPDATE movimientos
-        SET tipo = ?, producto = ?, descripcion = ?, cantidad = ?, peso_kg = ?, precio_total = ?, neto = ?, iva_rate = ?, modo_pago = ?, detalle_pago = ?, dinero_a_cuenta = ?, estado_pago = ?
-        WHERE id = ?
-    ''', (tipo, producto, descripcion, cantidad, peso_kg, precio_total, neto, iva_rate, modo_pago, detalle_pago, dinero_a_cuenta, estado_pago, mov_id))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('movimientos').document(mov_id).update({
+            'tipo': tipo,
+            'producto': producto,
+            'descripcion': descripcion,
+            'cantidad': cantidad,
+            'peso_kg': peso_kg,
+            'precio_total': precio_total,
+            'neto': neto,
+            'iva_rate': iva_rate,
+            'modo_pago': modo_pago,
+            'detalle_pago': detalle_pago,
+            'dinero_a_cuenta': dinero_a_cuenta,
+            'estado_pago': estado_pago
+        })
+    except Exception as e:
+        st.error(f"Error al actualizar movimiento: {str(e)}")
 
 def eliminar_movimiento(mov_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('DELETE FROM movimientos WHERE id = ?', (mov_id,))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('movimientos').document(mov_id).delete()
+    except Exception as e:
+        st.error(f"Error al eliminar movimiento: {str(e)}")
 
 def eliminar_movimientos_cliente(cliente):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('DELETE FROM movimientos WHERE descripcion = ?', (cliente,))
-    conn.commit()
-    conn.close()
+    try:
+        movimientos = db.collection('movimientos').where('descripcion', '==', cliente).stream()
+        for mov in movimientos:
+            mov.reference.delete()
+    except Exception as e:
+        st.error(f"Error al eliminar movimientos: {str(e)}")
 
 def crear_cliente(nombre, tipo, contacto, telefono, email, direccion, notas):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('''
-        INSERT INTO clientes (nombre, tipo, contacto, telefono, email, direccion, notas, activo, fecha_creacion)
-        VALUES (?,?,?,?,?,?,?,?,?)
-    ''', (nombre, tipo, contacto, telefono, email, direccion, notas, 1, fecha))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('clientes').add({
+            'nombre': nombre,
+            'tipo': tipo,
+            'contacto': contacto,
+            'telefono': telefono,
+            'email': email,
+            'direccion': direccion,
+            'notas': notas,
+            'activo': 1,
+            'fecha_creacion': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+    except Exception as e:
+        st.error(f"Error al crear cliente: {str(e)}")
+        raise
 
 def obtener_clientes():
-    conn = sqlite3.connect(DB_PATH)
-    df_clientes = pd.read_sql_query("SELECT * FROM clientes ORDER BY nombre ASC", conn)
-    conn.close()
-    return df_clientes
+    try:
+        clientes = db.collection('clientes').order_by('nombre').stream()
+        data = []
+        for cliente in clientes:
+            cliente_dict = cliente.to_dict()
+            cliente_dict['id'] = cliente.id
+            data.append(cliente_dict)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al obtener clientes: {str(e)}")
+        return pd.DataFrame()
 
 def actualizar_cliente(cliente_id, nombre, tipo, contacto, telefono, email, direccion, notas, activo):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('''
-        UPDATE clientes
-        SET nombre = ?, tipo = ?, contacto = ?, telefono = ?, email = ?, direccion = ?, notas = ?, activo = ?
-        WHERE id = ?
-    ''', (nombre, tipo, contacto, telefono, email, direccion, notas, 1 if activo else 0, cliente_id))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('clientes').document(cliente_id).update({
+            'nombre': nombre,
+            'tipo': tipo,
+            'contacto': contacto,
+            'telefono': telefono,
+            'email': email,
+            'direccion': direccion,
+            'notas': notas,
+            'activo': 1 if activo else 0
+        })
+    except Exception as e:
+        st.error(f"Error al actualizar cliente: {str(e)}")
 
 def eliminar_cliente(cliente_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('DELETE FROM clientes WHERE id = ?', (cliente_id,))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('clientes').document(cliente_id).delete()
+    except Exception as e:
+        st.error(f"Error al eliminar cliente: {str(e)}")
 
 def obtener_cliente_por_id(cliente_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT * FROM clientes WHERE id = ?', (cliente_id,))
-    row = c.fetchone()
-    conn.close()
-    if row:
-        return {
-            'id': row[0],
-            'nombre': row[1],
-            'tipo': row[2],
-            'contacto': row[3],
-            'telefono': row[4],
-            'email': row[5],
-            'direccion': row[6],
-            'notas': row[7],
-            'activo': row[8],
-            'fecha_creacion': row[9]
-        }
-    return None
+    try:
+        doc = db.collection('clientes').document(cliente_id).get()
+        if doc.exists:
+            data = doc.to_dict()
+            data['id'] = doc.id
+            return data
+        return None
+    except Exception as e:
+        st.error(f"Error al obtener cliente: {str(e)}")
+        return None
 
 def agregar_pago_cuenta(cliente_nombre, monto, concepto, tipo):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    c.execute('''
-        INSERT INTO pagos_cuenta (fecha, cliente_nombre, monto, concepto, tipo)
-        VALUES (?,?,?,?,?)
-    ''', (fecha, cliente_nombre, monto, concepto, tipo))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('pagos_cuenta').add({
+            'fecha': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'cliente_nombre': cliente_nombre,
+            'monto': monto,
+            'concepto': concepto,
+            'tipo': tipo
+        })
+    except Exception as e:
+        st.error(f"Error al agregar pago: {str(e)}")
 
 def obtener_pagos_cuenta():
-    conn = sqlite3.connect(DB_PATH)
-    df_pagos = pd.read_sql_query("SELECT * FROM pagos_cuenta ORDER BY fecha DESC", conn)
-    conn.close()
-    return df_pagos
+    try:
+        pagos = db.collection('pagos_cuenta').order_by('fecha', direction=firestore.Query.DESCENDING).stream()
+        data = []
+        for pago in pagos:
+            pago_dict = pago.to_dict()
+            pago_dict['id'] = pago.id
+            data.append(pago_dict)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al obtener pagos: {str(e)}")
+        return pd.DataFrame()
 
 def obtener_pagos_cuenta_cliente(cliente_nombre):
-    conn = sqlite3.connect(DB_PATH)
-    df_pagos = pd.read_sql_query(
-        "SELECT * FROM pagos_cuenta WHERE cliente_nombre = ? ORDER BY fecha DESC",
-        conn,
-        params=(cliente_nombre,)
-    )
-    conn.close()
-    return df_pagos
+    try:
+        pagos = db.collection('pagos_cuenta').where('cliente_nombre', '==', cliente_nombre).order_by('fecha', direction=firestore.Query.DESCENDING).stream()
+        data = []
+        for pago in pagos:
+            pago_dict = pago.to_dict()
+            pago_dict['id'] = pago.id
+            data.append(pago_dict)
+        return pd.DataFrame(data) if data else pd.DataFrame()
+    except Exception as e:
+        st.error(f"Error al obtener pagos del cliente: {str(e)}")
+        return pd.DataFrame()
 
 def calcular_saldo_cliente(cliente_nombre):
-    conn = sqlite3.connect(DB_PATH)
-    df_pagos = pd.read_sql_query(
-        "SELECT tipo, monto FROM pagos_cuenta WHERE cliente_nombre = ?",
-        conn,
-        params=(cliente_nombre,)
-    )
-    conn.close()
-    
-    saldo = 0
-    for _, row in df_pagos.iterrows():
-        if row['tipo'] == 'ingreso':
-            saldo += row['monto']
-        else:  # egreso
-            saldo -= row['monto']
-    return saldo
+    try:
+        df_pagos = obtener_pagos_cuenta_cliente(cliente_nombre)
+        saldo = 0
+        for _, row in df_pagos.iterrows():
+            if row['tipo'] == 'ingreso':
+                saldo += row['monto']
+            else:
+                saldo -= row['monto']
+        return saldo
+    except Exception as e:
+        st.error(f"Error al calcular saldo: {str(e)}")
+        return 0
 
 def eliminar_pago_cuenta(pago_id):
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('DELETE FROM pagos_cuenta WHERE id = ?', (pago_id,))
-    conn.commit()
-    conn.close()
+    try:
+        db.collection('pagos_cuenta').document(pago_id).delete()
+    except Exception as e:
+        st.error(f"Error al eliminar pago: {str(e)}")
 
 def guardar_sesion(usuario, rol):
     try:
@@ -412,28 +415,17 @@ with st.sidebar.expander("Acceso", expanded=True):
     if st.session_state.auth:
         st.write(f"Usuario: {st.session_state.auth['usuario']}")
         st.write(f"Rol: {st.session_state.auth['rol']}")
-        st.caption(f"DB: {DB_PATH}")
-        if DB_PATH.exists():
-            st.success(f"✓ BD activa ({DB_PATH.stat().st_size} bytes)")
-            # Mostrar estadísticas de datos persistentes
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
-                c.execute("SELECT COUNT(*) FROM clientes")
-                num_clientes = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM movimientos")
-                num_movimientos = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM pagos_cuenta")
-                num_pagos = c.fetchone()[0]
-                c.execute("SELECT COUNT(*) FROM usuarios")
-                num_usuarios = c.fetchone()[0]
-                conn.close()
-                st.caption(f"📊 {num_usuarios} usuarios | {num_clientes} clientes")
-                st.caption(f"📦 {num_movimientos} movimientos | {num_pagos} pagos")
-            except Exception as e:
-                st.error(f"Error BD: {str(e)}")
-        else:
-            st.error("✗ Base de datos no encontrada")
+        st.success("✓ Conectado a Firebase")
+        # Mostrar estadísticas de datos persistentes
+        try:
+            num_usuarios = len(list(db.collection('usuarios').stream()))
+            num_clientes = len(list(db.collection('clientes').stream()))
+            num_movimientos = len(list(db.collection('movimientos').stream()))
+            num_pagos = len(list(db.collection('pagos_cuenta').stream()))
+            st.caption(f"📊 {num_usuarios} usuarios | {num_clientes} clientes")
+            st.caption(f"📦 {num_movimientos} movimientos | {num_pagos} pagos")
+        except Exception as e:
+            st.error(f"Error BD: {str(e)}")
         if st.button("Cerrar sesion"):
             st.session_state.auth = None
             eliminar_sesion()
@@ -863,8 +855,8 @@ if st.session_state.auth['rol'] == 'admin':
                     st.success("Usuario creado")
                     st.session_state.user_form_key += 1
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("El usuario ya existe")
+                except Exception as e:
+                    st.error(f"Error al crear usuario: {str(e)}")
             else:
                 st.error("Completa usuario y contrasena")
 
@@ -964,8 +956,8 @@ if st.session_state.auth['rol'] == 'admin':
                     st.success("Cliente creado")
                     st.session_state.cliente_form_key += 1
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Ya existe un cliente con ese nombre")
+                except Exception as e:
+                    st.error(f"Error al crear cliente: {str(e)}")
             else:
                 st.error("Completa el nombre del cliente")
 
@@ -1001,8 +993,8 @@ if st.session_state.auth['rol'] == 'admin':
                     actualizar_cliente(cliente_id, nombre_edit, tipo_edit, contacto_edit, telefono_edit, email_edit, direccion_edit, notas_edit, activo_edit)
                     st.success("Cliente actualizado")
                     st.rerun()
-                except sqlite3.IntegrityError:
-                    st.error("Ya existe otro cliente con ese nombre")
+                except Exception as e:
+                    st.error(f"Error al actualizar cliente: {str(e)}")
             else:
                 st.error("Completa el nombre del cliente")
 
@@ -1088,40 +1080,32 @@ if st.session_state.auth['rol'] == 'admin':
             st.info("No hay pagos a cuenta para eliminar")
 
     st.markdown("---")
-    with st.expander("🔍 Diagnóstico de Base de Datos"):
-        st.write("**Información de la base de datos:**")
-        st.code(f"Ruta: {DB_PATH}")
-        st.write(f"Existe: {DB_PATH.exists()}")
-        if DB_PATH.exists():
-            st.write(f"Tamaño: {DB_PATH.stat().st_size} bytes")
-            st.write(f"Última modificación: {datetime.fromtimestamp(DB_PATH.stat().st_mtime)}")
+    with st.expander("🔍 Diagnóstico de Firebase"):
+        st.write("**Información de la conexión:**")
+        st.success("✅ Conectado a Firebase Firestore")
+        st.code(f"Archivo de configuración: {FIREBASE_CREDS}")
+        
+        try:
+            st.write("**Colecciones en Firebase:**")
+            st.write("- usuarios")
+            st.write("- clientes")
+            st.write("- movimientos")
+            st.write("- pagos_cuenta")
             
-            try:
-                conn = sqlite3.connect(DB_PATH)
-                c = conn.cursor()
+            st.write("**Conteo de documentos:**")
+            num_usuarios = len(list(db.collection('usuarios').stream()))
+            num_clientes = len(list(db.collection('clientes').stream()))
+            num_movimientos = len(list(db.collection('movimientos').stream()))
+            num_pagos = len(list(db.collection('pagos_cuenta').stream()))
+            
+            st.write(f"Usuarios: {num_usuarios}")
+            st.write(f"Clientes: {num_clientes}")
+            st.write(f"Movimientos: {num_movimientos}")
+            st.write(f"Pagos a cuenta: {num_pagos}")
+            
+            if st.button("Verificar integridad", key="btn_verify_integrity"):
+                st.success("✅ Firebase funcionando correctamente")
+                st.info("Los datos se sincronizan automáticamente en la nube")
                 
-                st.write("**Tablas en la base de datos:**")
-                c.execute("SELECT name FROM sqlite_master WHERE type='table';")
-                tablas = c.fetchall()
-                for tabla in tablas:
-                    st.write(f"- {tabla[0]}")
-                
-                st.write("**Conteo de registros:**")
-                c.execute("SELECT COUNT(*) FROM usuarios")
-                st.write(f"Usuarios: {c.fetchone()[0]}")
-                c.execute("SELECT COUNT(*) FROM clientes")
-                st.write(f"Clientes: {c.fetchone()[0]}")
-                c.execute("SELECT COUNT(*) FROM movimientos")
-                st.write(f"Movimientos: {c.fetchone()[0]}")
-                c.execute("SELECT COUNT(*) FROM pagos_cuenta")
-                st.write(f"Pagos a cuenta: {c.fetchone()[0]}")
-                
-                conn.close()
-                
-                if st.button("Verificar integridad", key="btn_verify_integrity"):
-                    st.success("Base de datos funcionando correctamente")
-                    
-            except Exception as e:
-                st.error(f"Error al consultar BD: {str(e)}")
-        else:
-            st.error("El archivo de base de datos no existe")
+        except Exception as e:
+            st.error(f"❌ Error al consultar Firebase: {str(e)}")
