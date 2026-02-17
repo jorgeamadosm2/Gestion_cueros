@@ -386,6 +386,14 @@ def confirmar_eliminacion_pago(pago_id, cliente, monto):
 # Inicializar DB al arrancar
 init_db()
 
+# Inicializar contadores para limpiar inputs
+if 'user_form_key' not in st.session_state:
+    st.session_state.user_form_key = 0
+if 'cliente_form_key' not in st.session_state:
+    st.session_state.cliente_form_key = 0
+if 'pago_form_key' not in st.session_state:
+    st.session_state.pago_form_key = 0
+
 # --- LOGIN ---
 if 'auth' not in st.session_state:
     sesion_guardada = cargar_sesion()
@@ -661,14 +669,15 @@ if st.session_state.auth['rol'] == 'admin':
         st.dataframe(df_users_log, use_container_width=True)
 
     with st.expander("Crear usuario"):
-        nuevo_usuario = st.text_input("Nuevo usuario", key="new_user")
-        nueva_pass = st.text_input("Contrasena", type="password", key="new_pass")
-        nuevo_rol = st.selectbox("Rol", ["user", "admin"], key="new_role")
+        nuevo_usuario = st.text_input("Nuevo usuario", key=f"new_user_{st.session_state.user_form_key}")
+        nueva_pass = st.text_input("Contrasena", type="password", key=f"new_pass_{st.session_state.user_form_key}")
+        nuevo_rol = st.selectbox("Rol", ["user", "admin"], key=f"new_role_{st.session_state.user_form_key}")
         if st.button("Crear", key="btn_crear_usuario"):
             if nuevo_usuario and nueva_pass:
                 try:
                     crear_usuario(nuevo_usuario, nueva_pass, nuevo_rol)
                     st.success("Usuario creado")
+                    st.session_state.user_form_key += 1
                     st.rerun()
                 except sqlite3.IntegrityError:
                     st.error("El usuario ya existe")
@@ -756,19 +765,20 @@ if st.session_state.auth['rol'] == 'admin':
         st.dataframe(df_clientes_log, use_container_width=True)
 
     with st.expander("Crear cliente"):
-        nombre_cliente = st.text_input("Nombre del cliente / proveedor", key="new_cliente_nombre")
-        tipo_cliente = st.selectbox("Tipo", ["Cliente", "Proveedor"], key="new_cliente_tipo")
-        contacto_cliente = st.text_input("Persona de contacto", key="new_cliente_contacto")
+        nombre_cliente = st.text_input("Nombre del cliente / proveedor", key=f"new_cliente_nombre_{st.session_state.cliente_form_key}")
+        tipo_cliente = st.selectbox("Tipo", ["Cliente", "Proveedor"], key=f"new_cliente_tipo_{st.session_state.cliente_form_key}")
+        contacto_cliente = st.text_input("Persona de contacto", key=f"new_cliente_contacto_{st.session_state.cliente_form_key}")
         col_tel, col_email = st.columns(2)
-        telefono_cliente = col_tel.text_input("Teléfono", key="new_cliente_telefono")
-        email_cliente = col_email.text_input("Email", key="new_cliente_email")
-        direccion_cliente = st.text_input("Dirección", key="new_cliente_direccion")
-        notas_cliente = st.text_area("Notas adicionales", key="new_cliente_notas")
+        telefono_cliente = col_tel.text_input("Teléfono", key=f"new_cliente_telefono_{st.session_state.cliente_form_key}")
+        email_cliente = col_email.text_input("Email", key=f"new_cliente_email_{st.session_state.cliente_form_key}")
+        direccion_cliente = st.text_input("Dirección", key=f"new_cliente_direccion_{st.session_state.cliente_form_key}")
+        notas_cliente = st.text_area("Notas adicionales", key=f"new_cliente_notas_{st.session_state.cliente_form_key}")
         if st.button("Crear", key="btn_crear_cliente"):
             if nombre_cliente:
                 try:
                     crear_cliente(nombre_cliente, tipo_cliente, contacto_cliente, telefono_cliente, email_cliente, direccion_cliente, notas_cliente)
                     st.success("Cliente creado")
+                    st.session_state.cliente_form_key += 1
                     st.rerun()
                 except sqlite3.IntegrityError:
                     st.error("Ya existe un cliente con ese nombre")
@@ -845,16 +855,17 @@ if st.session_state.auth['rol'] == 'admin':
             tipo_pago = st.radio(
                 "Tipo de movimiento",
                 ["Ingreso (cliente deja dinero)", "Egreso (se usa saldo del cliente)"],
-                key="tipo_pago_cuenta"
+                key=f"tipo_pago_cuenta_{st.session_state.pago_form_key}"
             )
-            monto_pago = st.number_input("Monto ($)", min_value=0.0, step=100.0, key="monto_pago")
-            concepto_pago = st.text_area("Concepto / Detalle", key="concepto_pago")
+            monto_pago = st.number_input("Monto ($)", min_value=0.0, step=100.0, key=f"monto_pago_{st.session_state.pago_form_key}")
+            concepto_pago = st.text_area("Concepto / Detalle", key=f"concepto_pago_{st.session_state.pago_form_key}")
             
             if st.button("Registrar pago", key="btn_registrar_pago"):
                 if monto_pago > 0 and concepto_pago:
                     tipo_db = "ingreso" if "Ingreso" in tipo_pago else "egreso"
                     agregar_pago_cuenta(cliente_pago, monto_pago, concepto_pago, tipo_db)
                     st.success(f"Pago a cuenta registrado para {cliente_pago}")
+                    st.session_state.pago_form_key += 1
                     st.rerun()
                 else:
                     st.error("Completa el monto y el concepto")
