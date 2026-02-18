@@ -20,12 +20,12 @@ def get_firebase_credentials():
     """Obtener credenciales de Firebase desde múltiples fuentes"""
     
     # Opción 1: Streamlit Secrets (recomendado para deployment)
-    if hasattr(st, 'secrets') and 'firebase' in st.secrets:
-        try:
+    try:
+        if 'firebase' in st.secrets:
             firebase_secrets = dict(st.secrets['firebase'])
             return firebase_secrets
-        except Exception as e:
-            st.warning(f"⚠️ Error al leer secrets de Streamlit: {str(e)}")
+    except Exception as e:
+        st.warning(f"⚠️ Error al leer secrets de Streamlit: {str(e)}")
     
     # Opción 2: Archivo firebase_config.json (recomendado para desarrollo local)
     if FIREBASE_CREDS.exists():
@@ -42,6 +42,7 @@ def get_firebase_credentials():
                 "type": os.getenv('FIREBASE_TYPE', 'service_account'),
                 "project_id": os.getenv('FIREBASE_PROJECT_ID'),
                 "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+                # Replace escaped newlines - env vars often store multi-line keys as single line with \n
                 "private_key": os.getenv('FIREBASE_PRIVATE_KEY', '').replace('\\n', '\n'),
                 "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
                 "client_id": os.getenv('FIREBASE_CLIENT_ID'),

@@ -65,7 +65,7 @@ def test_firebase_credentials():
         
         checks = {
             'firebase_config.json': 'firebase_config.json' in gitignore_content,
-            '.streamlit/secrets.toml': '.streamlit/secrets.toml' in gitignore_content or 'secrets.toml' in gitignore_content,
+            '.streamlit/secrets.toml': '.streamlit/secrets.toml' in gitignore_content,
         }
         
         for item, found in checks.items():
