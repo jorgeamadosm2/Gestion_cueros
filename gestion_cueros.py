@@ -515,6 +515,63 @@ with st.sidebar.expander("Acceso", expanded=True):
 if not st.session_state.auth:
     st.stop()
 
+# --- BARRA LATERAL (ESTADO DE CUENTA SIEMPRE VISIBLE) ---
+st.sidebar.header("💰 Estado de Cuenta")
+
+# Obtener lista de clientes para selector
+df_clientes_estado = obtener_clientes()
+if not df_clientes_estado.empty:
+    clientes_activos_estado = df_clientes_estado[df_clientes_estado['activo'] == 1]
+    if not clientes_activos_estado.empty:
+        opciones_clientes_estado = ["-- Seleccionar cliente --"] + clientes_activos_estado['nombre'].tolist()
+        cliente_seleccionado_sidebar = st.sidebar.selectbox("Ver estado de cuenta de:", opciones_clientes_estado, key="cliente_sidebar_estado")
+        
+        if cliente_seleccionado_sidebar != "-- Seleccionar cliente --":
+            # Obtener datos del cliente
+            df_todas_movimientos = obtener_datos()
+            df_cliente_estado = df_todas_movimientos[df_todas_movimientos['descripcion'] == cliente_seleccionado_sidebar]
+            df_pagos_cliente_estado = obtener_pagos_cuenta_cliente(cliente_seleccionado_sidebar)
+            
+            # Calcular totales rápido
+            compras = df_cliente_estado[df_cliente_estado['tipo'] == 'Ingreso (Compra)']['precio_total'].sum()
+            ventas = df_cliente_estado[df_cliente_estado['tipo'] == 'Egreso (Venta)']['precio_total'].sum()
+            compras_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Ingreso (Compra)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
+            ventas_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Egreso (Venta)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
+            saldo_cuenta = calcular_saldo_cliente(cliente_seleccionado_sidebar)
+            balance_total = ventas_impagag - compras_impagag + saldo_cuenta
+            
+            # Mostrar resumen en el sidebar
+            st.sidebar.markdown("---")
+            st.sidebar.write(f"**{cliente_seleccionado_sidebar}**")
+            
+            # Indicador visual del balance
+            if balance_total > 0:
+                st.sidebar.info(f"🟢 Me deben: **${balance_total:,.2f}**")
+            elif balance_total < 0:
+                st.sidebar.warning(f"🔴 Les debo: **${abs(balance_total):,.2f}**")
+            else:
+                st.sidebar.success(f"⚪ Saldo equilibrado: $0.00")
+            
+            # Detalles
+            col_d1, col_d2 = st.sidebar.columns(2)
+            with col_d1:
+                st.metric("Comprado", f"${compras:,.0f}", label_visibility="collapsed")
+                st.caption("Comprado total", help="Total de compras a este proveedor")
+            with col_d2:
+                st.metric("Vendido", f"${ventas:,.0f}", label_visibility="collapsed")
+                st.caption("Vendido total", help="Total de ventas a este cliente")
+            
+            col_d3, col_d4 = st.sidebar.columns(2)
+            with col_d3:
+                st.metric("No pagado", f"${compras_impagag:,.0f}", label_visibility="collapsed")
+                st.caption("Deuda compras", help="Dinero que debo pagar")
+            with col_d4:
+                st.metric("Por cobrar", f"${ventas_impagag:,.0f}", label_visibility="collapsed")
+                st.caption("Deuda ventas", help="Dinero que me deben")
+            
+            st.sidebar.metric("A Cuenta", f"${saldo_cuenta:,.0f}", label_visibility="collapsed")
+            st.sidebar.markdown("---")
+
 # --- BARRA LATERAL (ENTRADA DE DATOS) ---
 st.sidebar.header("Nuevo Registro")
 
@@ -689,7 +746,7 @@ if not df.empty:
 
     # --- RESUMEN POR CLIENTE ---
     st.markdown("---")
-    st.subheader("Estado de Cuenta por Cliente")
+    st.subheader("📄 Estado de Cuenta Detallado")
     
     # Obtener lista de clientes únicos desde movimientos y pagos
     clientes_movimientos = sorted(df['descripcion'].dropna().unique().tolist())
@@ -698,7 +755,14 @@ if not df.empty:
     clientes_unicos = sorted(list(set(clientes_movimientos + clientes_pagos)))
     
     opciones_resumen = ["Todos"] + clientes_unicos
-    cliente_resumen = st.selectbox("Selecciona un cliente", opciones_resumen, key="cliente_resumen")
+    
+    # Usar el cliente seleccionado en el sidebar como predeterminado (si existe)
+    indice_default = 0
+    if 'cliente_seleccionado_sidebar' in locals() and cliente_seleccionado_sidebar != "-- Seleccionar cliente --":
+        if cliente_seleccionado_sidebar in opciones_resumen:
+            indice_default = opciones_resumen.index(cliente_seleccionado_sidebar)
+    
+    cliente_resumen = st.selectbox("Selecciona un cliente para ver estado detallado", opciones_resumen, index=indice_default, key="cliente_resumen")
     
     if cliente_resumen != "Todos":
         # Filtrar datos del cliente
