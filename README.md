@@ -2,7 +2,27 @@
 
 Sistema de gestión de inventario y pagos para negocios de cueros, construido con Streamlit y Firebase.
 
-## 🚀 Inicio Rápido
+---
+
+## 📱 ¿Quieres acceder desde tu teléfono?
+
+### 🚀 **[▶️ EMPEZAR AQUÍ - Deploy en 5 minutos](EMPEZAR_AQUI.md)**
+
+Sube tu app a la nube (gratis) y accede desde cualquier dispositivo:
+- ✅ Teléfonos, tablets y computadoras
+- ✅ Sin servidor propio
+- ✅ Actualizaciones automáticas
+- ✅ URL pública con HTTPS
+
+**Guías disponibles:**
+- 🚀 [EMPEZAR_AQUI.md](EMPEZAR_AQUI.md) - Pasos rápidos (¡comienza aquí!)
+- ⚡ [QUICK_START_DEPLOY.md](QUICK_START_DEPLOY.md) - Comandos listos para copiar
+- 📖 [DEPLOY_STREAMLIT_CLOUD.md](DEPLOY_STREAMLIT_CLOUD.md) - Guía completa detallada
+- 🔒 [VERIFICACION_SEGURIDAD.md](VERIFICACION_SEGURIDAD.md) - Checklist de seguridad
+
+---
+
+## 🚀 Inicio Rápido (Desarrollo Local)
 
 ### 1. Instalar Dependencias
 

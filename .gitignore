@@ -52,3 +52,22 @@ wheels/
 # OS
 .DS_Store
 Thumbs.db
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+*.cover
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.bak
+*.backup
+*~.nib
+
+# Local development
+.env
+.env.local

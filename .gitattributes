@@ -1,0 +1,33 @@
+# Configuración de Git para el proyecto
+# Normaliza saltos de línea automáticamente
+
+# Default behavior: normalize line endings to LF when checking in
+* text=auto
+
+# Python files
+*.py text eol=lf
+
+# Markdown files
+*.md text eol=lf
+
+# JSON and TOML files
+*.json text eol=lf
+*.toml text eol=lf
+
+# Shell scripts (if any)
+*.sh text eol=lf
+
+# Windows batch files
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary files (no line ending conversion)
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
