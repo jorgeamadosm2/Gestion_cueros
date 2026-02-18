@@ -1,5 +1,8 @@
 # 🔥 Configuración de Firebase para Gestión de Cueros
 
+> **🆕 ACTUALIZACIÓN:** Esta aplicación ahora soporta **múltiples métodos** de configuración.  
+> Para una guía completa y actualizada, consulta: [CONFIGURACION_FIREBASE.md](CONFIGURACION_FIREBASE.md)
+
 ## 📋 Requisitos Previos
 - Cuenta de Google
 - Python instalado
