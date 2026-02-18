@@ -7,6 +7,7 @@ import json
 import os
 import firebase_admin
 from firebase_admin import credentials, firestore
+from io import BytesIO
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
@@ -409,6 +410,18 @@ def eliminar_sesion():
     except:
         pass
 
+def generar_excel(dataframe, nombre_hoja="Datos"):
+    """Genera un archivo Excel desde un DataFrame"""
+    try:
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            dataframe.to_excel(writer, sheet_name=nombre_hoja, index=False)
+        output.seek(0)
+        return output.getvalue()
+    except Exception as e:
+        st.error(f"Error al generar Excel: {str(e)}")
+        return None
+
 @st.dialog("Confirmar eliminacion")
 def confirmar_eliminacion(mov_id, descripcion, total):
     st.write(f"ID: {mov_id}")
@@ -529,14 +542,31 @@ if not df_clientes_estado.empty:
         if cliente_seleccionado_sidebar != "-- Seleccionar cliente --":
             # Obtener datos del cliente
             df_todas_movimientos = obtener_datos()
-            df_cliente_estado = df_todas_movimientos[df_todas_movimientos['descripcion'] == cliente_seleccionado_sidebar]
-            df_pagos_cliente_estado = obtener_pagos_cuenta_cliente(cliente_seleccionado_sidebar)
+            
+            # Validar que el DataFrame tenga la columna 'descripcion'
+            if not df_todas_movimientos.empty and 'descripcion' in df_todas_movimientos.columns:
+                df_cliente_estado = df_todas_movimientos[df_todas_movimientos['descripcion'] == cliente_seleccionado_sidebar]
+            else:
+                df_cliente_estado = pd.DataFrame()
+                
+            try:
+                df_pagos_cliente_estado = obtener_pagos_cuenta_cliente(cliente_seleccionado_sidebar)
+            except:
+                df_pagos_cliente_estado = pd.DataFrame()
             
             # Calcular totales rápido
-            compras = df_cliente_estado[df_cliente_estado['tipo'] == 'Ingreso (Compra)']['precio_total'].sum()
-            ventas = df_cliente_estado[df_cliente_estado['tipo'] == 'Egreso (Venta)']['precio_total'].sum()
-            compras_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Ingreso (Compra)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
-            ventas_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Egreso (Venta)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
+            compras = 0
+            ventas = 0
+            compras_impagag = 0
+            ventas_impagag = 0
+            
+            if not df_cliente_estado.empty:
+                if 'precio_total' in df_cliente_estado.columns and 'tipo' in df_cliente_estado.columns and 'estado_pago' in df_cliente_estado.columns:
+                    compras = df_cliente_estado[df_cliente_estado['tipo'] == 'Ingreso (Compra)']['precio_total'].sum()
+                    ventas = df_cliente_estado[df_cliente_estado['tipo'] == 'Egreso (Venta)']['precio_total'].sum()
+                    compras_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Ingreso (Compra)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
+                    ventas_impagag = df_cliente_estado[(df_cliente_estado['tipo'] == 'Egreso (Venta)') & (df_cliente_estado['estado_pago'] == 'Impago')]['precio_total'].sum()
+            
             saldo_cuenta = calcular_saldo_cliente(cliente_seleccionado_sidebar)
             balance_total = ventas_impagag - compras_impagag + saldo_cuenta
             
@@ -664,7 +694,7 @@ if not df.empty:
     col_f1, col_f2, col_f3, col_f4 = st.columns([2, 2, 3, 1])
     filtro_pago = col_f1.selectbox("Filtrar por estado de pago:", ["Todos", "Impago", "Pagado"], key="filtro_pago")
     filtro_producto = col_f2.selectbox("Filtrar por producto:", ["Todos", "Sal", "Cueros"], key="filtro_producto")
-    clientes = sorted(df['descripcion'].dropna().unique().tolist())
+    clientes = sorted(df['descripcion'].dropna().unique().tolist()) if 'descripcion' in df.columns else []
     opciones_clientes = ["Todos"] + clientes
     filtro_cliente = col_f3.selectbox("Filtrar por cliente / descripcion", opciones_clientes, key="filtro_cliente")
     if col_f4.button("Limpiar"):
@@ -674,28 +704,40 @@ if not df.empty:
         st.rerun()
 
     df_metric = df
-    if filtro_pago != "Todos":
+    if filtro_pago != "Todos" and 'estado_pago' in df_metric.columns:
         df_metric = df_metric[df_metric['estado_pago'] == filtro_pago]
-    if filtro_producto != "Todos":
+    if filtro_producto != "Todos" and 'producto' in df_metric.columns:
         df_metric = df_metric[df_metric['producto'] == filtro_producto]
-    if filtro_cliente != "Todos":
+    if filtro_cliente != "Todos" and 'descripcion' in df_metric.columns:
         df_metric = df_metric[df_metric['descripcion'] == filtro_cliente]
 
     # 2. Cálculos de Stock y Finanzas
-    ingresos = df_metric[df_metric['tipo'] == 'Ingreso (Compra)']
-    egresos = df_metric[df_metric['tipo'] == 'Egreso (Venta)']
+    stock_actual_u = 0
+    stock_actual_kg = 0
+    deuda_compras = 0
+    a_cobrar_ventas = 0
+    cobrado_ventas = 0
+    pagado_compras = 0
+    dinero_esperado = 0
     
-    stock_actual_u = ingresos['cantidad'].sum() - egresos['cantidad'].sum()
-    stock_actual_kg = ingresos['peso_kg'].sum() - egresos['peso_kg'].sum()
-    
-    # Deudas (Lo que debo pagar por compras impagas)
-    deuda_compras = ingresos[ingresos['estado_pago'] == 'Impago']['precio_total'].sum()
-    # A cobrar (Lo que me deben por ventas impagas)
-    a_cobrar_ventas = egresos[egresos['estado_pago'] == 'Impago']['precio_total'].sum()
-    # Dinero esperado (cobrado ventas - pagado compras)
-    cobrado_ventas = egresos[egresos['estado_pago'] == 'Pagado']['precio_total'].sum()
-    pagado_compras = ingresos[ingresos['estado_pago'] == 'Pagado']['precio_total'].sum()
-    dinero_esperado = cobrado_ventas - pagado_compras
+    if not df_metric.empty and 'tipo' in df_metric.columns:
+        ingresos = df_metric[df_metric['tipo'] == 'Ingreso (Compra)']
+        egresos = df_metric[df_metric['tipo'] == 'Egreso (Venta)']
+        
+        if 'cantidad' in df_metric.columns:
+            stock_actual_u = ingresos['cantidad'].sum() - egresos['cantidad'].sum()
+        if 'peso_kg' in df_metric.columns:
+            stock_actual_kg = ingresos['peso_kg'].sum() - egresos['peso_kg'].sum()
+        
+        # Deudas (Lo que debo pagar por compras impagas)
+        if 'estado_pago' in df_metric.columns and 'precio_total' in df_metric.columns:
+            deuda_compras = ingresos[ingresos['estado_pago'] == 'Impago']['precio_total'].sum()
+            # A cobrar (Lo que me deben por ventas impagas)
+            a_cobrar_ventas = egresos[egresos['estado_pago'] == 'Impago']['precio_total'].sum()
+            # Dinero esperado (cobrado ventas - pagado compras)
+            cobrado_ventas = egresos[egresos['estado_pago'] == 'Pagado']['precio_total'].sum()
+            pagado_compras = ingresos[ingresos['estado_pago'] == 'Pagado']['precio_total'].sum()
+            dinero_esperado = cobrado_ventas - pagado_compras
 
     # 3. Métricas en tarjetas
     col_a, col_b, col_c, col_d, col_e = st.columns(5)
@@ -711,11 +753,11 @@ if not df.empty:
     st.subheader("📋 Registro de Movimientos")
 
     df_show = df
-    if filtro_pago != "Todos":
+    if filtro_pago != "Todos" and 'estado_pago' in df_show.columns:
         df_show = df_show[df_show['estado_pago'] == filtro_pago]
-    if filtro_producto != "Todos":
+    if filtro_producto != "Todos" and 'producto' in df_show.columns:
         df_show = df_show[df_show['producto'] == filtro_producto]
-    if filtro_cliente != "Todos":
+    if filtro_cliente != "Todos" and 'descripcion' in df_show.columns:
         df_show = df_show[df_show['descripcion'] == filtro_cliente]
 
     df_show_display = df_show.copy()
@@ -749,7 +791,7 @@ if not df.empty:
     st.subheader("📄 Estado de Cuenta Detallado")
     
     # Obtener lista de clientes únicos desde movimientos y pagos
-    clientes_movimientos = sorted(df['descripcion'].dropna().unique().tolist())
+    clientes_movimientos = sorted(df['descripcion'].dropna().unique().tolist()) if 'descripcion' in df.columns else []
     df_pagos_todos = obtener_pagos_cuenta()
     clientes_pagos = df_pagos_todos['cliente_nombre'].unique().tolist() if not df_pagos_todos.empty else []
     clientes_unicos = sorted(list(set(clientes_movimientos + clientes_pagos)))
@@ -878,15 +920,27 @@ if not df.empty:
             
             st.dataframe(df_cuenta, use_container_width=True)
             
-            # Exportar a CSV
-            csv = df_cuenta.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Descargar estado de cuenta (CSV)",
-                data=csv,
-                file_name=f"estado_cuenta_{cliente_resumen}_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key="download_estado_cuenta"
-            )
+            # Exportar a Excel y CSV
+            col_exp1, col_exp2 = st.columns(2)
+            with col_exp1:
+                excel_data = generar_excel(df_cuenta, nombre_hoja="Estado de Cuenta")
+                if excel_data:
+                    st.download_button(
+                        label="📊 Descargar en Excel",
+                        data=excel_data,
+                        file_name=f"estado_cuenta_{cliente_resumen}_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_estado_cuenta_excel"
+                    )
+            with col_exp2:
+                csv = df_cuenta.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📄 Descargar en CSV",
+                    data=csv,
+                    file_name=f"estado_cuenta_{cliente_resumen}_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    key="download_estado_cuenta_csv"
+                )
         else:
             st.info("No hay movimientos registrados para este cliente")
         
@@ -905,24 +959,25 @@ if not df.empty:
         st.markdown("### 📊 Resumen General de Todos los Clientes")
         
         resumen_general = []
-        for cliente in clientes_unicos:
-            df_cliente = df[df['descripcion'] == cliente]
-            compras = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']['precio_total'].sum()
-            ventas = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']['precio_total'].sum()
-            compras_impagag = df_cliente[(df_cliente['tipo'] == 'Ingreso (Compra)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum()
-            ventas_impagag = df_cliente[(df_cliente['tipo'] == 'Egreso (Venta)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum()
-            saldo = calcular_saldo_cliente(cliente)
-            balance = ventas_impagag - compras_impagag + saldo
-            
-            resumen_general.append({
-                'Cliente': cliente,
-                'Total Comprado': compras,
-                'Total Vendido': ventas,
-                'Deuda Compras': compras_impagag,
-                'Deuda Ventas': ventas_impagag,
-                'Saldo a Cuenta': saldo,
-                'Balance Final': balance
-            })
+        if clientes_unicos:
+            for cliente in clientes_unicos:
+                df_cliente = df[df['descripcion'] == cliente] if not df.empty else pd.DataFrame()
+                compras = df_cliente[df_cliente['tipo'] == 'Ingreso (Compra)']['precio_total'].sum() if not df_cliente.empty else 0
+                ventas = df_cliente[df_cliente['tipo'] == 'Egreso (Venta)']['precio_total'].sum() if not df_cliente.empty else 0
+                compras_impagag = df_cliente[(df_cliente['tipo'] == 'Ingreso (Compra)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum() if not df_cliente.empty else 0
+                ventas_impagag = df_cliente[(df_cliente['tipo'] == 'Egreso (Venta)') & (df_cliente['estado_pago'] == 'Impago')]['precio_total'].sum() if not df_cliente.empty else 0
+                saldo = calcular_saldo_cliente(cliente)
+                balance = ventas_impagag - compras_impagag + saldo
+                
+                resumen_general.append({
+                    'Cliente': cliente,
+                    'Total Comprado': compras,
+                    'Total Vendido': ventas,
+                    'Deuda Compras': compras_impagag,
+                    'Deuda Ventas': ventas_impagag,
+                    'Saldo a Cuenta': saldo,
+                    'Balance Final': balance
+                })
         
         if resumen_general:
             df_resumen = pd.DataFrame(resumen_general)
@@ -947,14 +1002,26 @@ if not df.empty:
             col_t4.metric("Balance General", f"${df_resumen['Balance Final'].sum():,.2f}")
             
             # Exportar resumen general
-            csv_general = df_resumen.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 Descargar resumen general (CSV)",
-                data=csv_general,
-                file_name=f"resumen_clientes_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                key="download_resumen_general"
-            )
+            col_exp1, col_exp2 = st.columns(2)
+            with col_exp1:
+                excel_general = generar_excel(df_resumen, nombre_hoja="Resumen Clientes")
+                if excel_general:
+                    st.download_button(
+                        label="📊 Descargar resumen en Excel",
+                        data=excel_general,
+                        file_name=f"resumen_clientes_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="download_resumen_general_excel"
+                    )
+            with col_exp2:
+                csv_general = df_resumen.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📄 Descargar resumen en CSV",
+                    data=csv_general,
+                    file_name=f"resumen_clientes_{datetime.now().strftime('%Y%m%d')}.csv",
+                    mime="text/csv",
+                    key="download_resumen_general_csv"
+                )
         else:
             st.info("No hay clientes con movimientos registrados")
 
