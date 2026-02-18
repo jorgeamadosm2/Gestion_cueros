@@ -1,21 +1,12 @@
 import streamlit as st
-import firebase_admin
-from firebase_admin import credentials, firestore
-
-firebase_config = st.secrets["firebase"]
-
-cred = credentials.Certificate(firebase_config)
-firebase_admin.initialize_app(cred)
-
-db = firestore.client()
-
 import pandas as pd
 from datetime import datetime
 import hashlib
 from pathlib import Path
 import json
 import os
-
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
@@ -31,7 +22,20 @@ def get_firebase_credentials():
     # Opción 1: Streamlit Secrets (recomendado para deployment)
     try:
         if 'firebase' in st.secrets:
-            firebase_secrets = dict(st.secrets['firebase'])
+            # Convertir a dict regular y asegurar que private_key tenga formato correcto
+            firebase_secrets = {
+                "type": str(st.secrets["firebase"]["type"]),
+                "project_id": str(st.secrets["firebase"]["project_id"]),
+                "private_key_id": str(st.secrets["firebase"]["private_key_id"]),
+                "private_key": str(st.secrets["firebase"]["private_key"]),
+                "client_email": str(st.secrets["firebase"]["client_email"]),
+                "client_id": str(st.secrets["firebase"]["client_id"]),
+                "auth_uri": str(st.secrets["firebase"]["auth_uri"]),
+                "token_uri": str(st.secrets["firebase"]["token_uri"]),
+                "auth_provider_x509_cert_url": str(st.secrets["firebase"]["auth_provider_x509_cert_url"]),
+                "client_x509_cert_url": str(st.secrets["firebase"]["client_x509_cert_url"]),
+                "universe_domain": str(st.secrets["firebase"].get("universe_domain", "googleapis.com"))
+            }
             return firebase_secrets
     except Exception as e:
         st.warning(f"⚠️ Error al leer secrets de Streamlit: {str(e)}")
