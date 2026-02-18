@@ -1,12 +1,21 @@
 import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore
+
+firebase_config = st.secrets["firebase"]
+
+cred = credentials.Certificate(firebase_config)
+firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
 import pandas as pd
 from datetime import datetime
 import hashlib
 from pathlib import Path
 import json
 import os
-import firebase_admin
-from firebase_admin import credentials, firestore
+
 
 # --- CONFIGURACIÓN DE LA PÁGINA ---
 st.set_page_config(page_title="Gestión Cueros", layout="wide")
