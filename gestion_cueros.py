@@ -4,6 +4,7 @@ from datetime import datetime
 import hashlib
 from pathlib import Path
 import json
+import os
 import firebase_admin
 from firebase_admin import credentials, firestore
 
@@ -15,16 +16,71 @@ SESSION_FILE = Path(__file__).resolve().parent / ".session.json"
 FIREBASE_CREDS = Path(__file__).resolve().parent / "firebase_config.json"
 
 # --- INICIALIZACIÓN DE FIREBASE ---
+def get_firebase_credentials():
+    """Obtener credenciales de Firebase desde múltiples fuentes"""
+    
+    # Opción 1: Streamlit Secrets (recomendado para deployment)
+    try:
+        if 'firebase' in st.secrets:
+            firebase_secrets = dict(st.secrets['firebase'])
+            return firebase_secrets
+    except Exception as e:
+        st.warning(f"⚠️ Error al leer secrets de Streamlit: {str(e)}")
+    
+    # Opción 2: Archivo firebase_config.json (recomendado para desarrollo local)
+    if FIREBASE_CREDS.exists():
+        try:
+            with open(FIREBASE_CREDS, 'r') as f:
+                return json.load(f)
+        except Exception as e:
+            st.warning(f"⚠️ Error al leer firebase_config.json: {str(e)}")
+    
+    # Opción 3: Variables de entorno
+    if os.getenv('FIREBASE_PROJECT_ID'):
+        try:
+            return {
+                "type": os.getenv('FIREBASE_TYPE', 'service_account'),
+                "project_id": os.getenv('FIREBASE_PROJECT_ID'),
+                "private_key_id": os.getenv('FIREBASE_PRIVATE_KEY_ID'),
+                # Replace escaped newlines - env vars often store multi-line keys as single line with \n
+                "private_key": os.getenv('FIREBASE_PRIVATE_KEY', '').replace('\\n', '\n'),
+                "client_email": os.getenv('FIREBASE_CLIENT_EMAIL'),
+                "client_id": os.getenv('FIREBASE_CLIENT_ID'),
+                "auth_uri": os.getenv('FIREBASE_AUTH_URI', 'https://accounts.google.com/o/oauth2/auth'),
+                "token_uri": os.getenv('FIREBASE_TOKEN_URI', 'https://oauth2.googleapis.com/token'),
+                "auth_provider_x509_cert_url": os.getenv('FIREBASE_AUTH_PROVIDER_CERT_URL', 'https://www.googleapis.com/oauth2/v1/certs'),
+                "client_x509_cert_url": os.getenv('FIREBASE_CLIENT_CERT_URL'),
+                "universe_domain": os.getenv('FIREBASE_UNIVERSE_DOMAIN', 'googleapis.com')
+            }
+        except Exception as e:
+            st.warning(f"⚠️ Error al leer variables de entorno: {str(e)}")
+    
+    return None
+
 if not firebase_admin._apps:
     try:
-        if FIREBASE_CREDS.exists():
-            cred = credentials.Certificate(str(FIREBASE_CREDS))
+        creds_dict = get_firebase_credentials()
+        
+        if creds_dict:
+            cred = credentials.Certificate(creds_dict)
             firebase_admin.initialize_app(cred)
             db = firestore.client()
+            st.sidebar.success("✅ Conectado a Firebase")
         else:
-            st.error("❌ Error: Archivo 'firebase_config.json' no encontrado")
-            st.info("📄 Crea el archivo firebase_config.json con tus credenciales de Firebase")
-            st.code("Ver firebase_config_example.json para el formato correcto")
+            st.error("❌ Error: No se encontraron credenciales de Firebase")
+            st.info("📄 **Opciones para configurar Firebase:**")
+            st.markdown("""
+            **Opción 1: Archivo de configuración (desarrollo local)**
+            - Crea el archivo `firebase_config.json` con tus credenciales de Firebase
+            - Ver `firebase_config_example.json` para el formato correcto
+            
+            **Opción 2: Streamlit Secrets (recomendado para deployment)**
+            - Crea el archivo `.streamlit/secrets.toml` 
+            - Ver `.streamlit/secrets.toml.example` para el formato correcto
+            
+            **Opción 3: Variables de entorno**
+            - Define las variables de entorno necesarias (ver documentación)
+            """)
             st.stop()
     except Exception as e:
         st.error(f"❌ Error al conectar con Firebase: {str(e)}")

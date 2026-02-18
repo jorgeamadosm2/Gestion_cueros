@@ -1,5 +1,9 @@
 # 🎉 ¡Firebase Configurado Exitosamente!
 
+> **📚 ¿Necesitas configurar Firebase?**  
+> Consulta la guía completa: [CONFIGURACION_FIREBASE.md](CONFIGURACION_FIREBASE.md)  
+> Soportamos **3 métodos**: archivo JSON, Streamlit Secrets y Variables de Entorno
+
 Tu aplicación de **Gestión de Cueros** ahora está funcionando con **Firebase Firestore** en la nube.
 
 ## ✅ Estado Actual
