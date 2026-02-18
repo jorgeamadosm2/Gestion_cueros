@@ -1,5 +1,8 @@
 # Firebase credentials - NUNCA subir esto a GitHub
 firebase_config.json
+firebase_config.json.json
+**/firebase_config.json
+**/firebase_config.json.json
 
 # Session files
 .session.json
